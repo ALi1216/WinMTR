@@ -29,7 +29,7 @@
    vcpkg install openssl:x64-windows msgpack-c:x64-windows
    mkdir build && cd build
    cmake .. -DCMAKE_TOOLCHAIN_FILE=C:/path/to/vcpkg/scripts/buildsystems/vcpkg.cmake -DCMAKE_GENERATOR_PLATFORM=x64
-   cmake -- build . --config Release
+   cmake --build . --config Release
    ```
    产物在 `build/Release/`（或 `build/`）下。
 
