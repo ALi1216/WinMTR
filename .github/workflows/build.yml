@@ -15,6 +15,12 @@ jobs:
       - name: Setup MSBuild (VS2022 / v143)
         uses: microsoft/setup-msbuild@v2
 
+      - name: Install MFC/ATL component (windows-latest 默认未装)
+        shell: cmd
+        run: |
+          for /f "tokens=*" %%i in ('"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath') do set VSINST=%%i
+          "%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\setup.exe" modify --installPath "%%VSINST%%" --add Microsoft.VisualStudio.Component.VC.ATLMFC --quiet --wait
+
       - name: Install vcpkg + OpenSSL / msgpack-c
         shell: cmd
         run: |
@@ -31,7 +37,7 @@ jobs:
           call "%%VSINST%%\VC\Auxiliary\Build\vcvars64.bat"
           git clone --depth 1 https://github.com/tagphi/czdb-search-c.git C:\czdb-sdk
           cmake -S C:\czdb-sdk -B C:\czdb-sdk\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
-          cmake --build C:\czdb-sdk\build
+          cmake --build C:\czdb-sdk\build || exit /b 1
           if not exist czdb_lib mkdir czdb_lib
           copy /Y C:\czdb-sdk\build\db_searcher.dll czdb_lib\
           copy /Y C:\czdb-sdk\build\db_searcher.lib czdb_lib\
@@ -41,10 +47,10 @@ jobs:
           echo --- czdb_lib contents ---
           dir czdb_lib
 
-      - name: Build WinMTR.exe (x64, retarget v120 -> v143)
+      - name: Build WinMTR.exe (x64, retarget v120 -> v143, MFC Static)
         shell: cmd
         run: |
-          msbuild WinMTR.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /m
+          msbuild WinMTR.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /m || exit /b 1
           echo --- Release_x64 contents ---
           dir Release_x64
 
@@ -53,3 +59,4 @@ jobs:
         with:
           name: WinMTR-CZDB-x64
           path: Release_x64
+          if-no-files-found: error
