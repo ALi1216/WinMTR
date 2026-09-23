@@ -15,23 +15,14 @@ jobs:
       - name: Setup MSBuild (VS2022+)
         uses: microsoft/setup-msbuild@v2
 
-      - name: Install MFC/ATL component
+      - name: Verify MFC/ATL is available
         shell: pwsh
         run: |
           $VSINST = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
           Write-Host "VSINST=$VSINST"
-          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
-          $proc = Start-Process -FilePath $installer -ArgumentList @(
-            'modify',
-            '--installPath', $VSINST,
-            '--add', 'Microsoft.VisualStudio.Component.VC.ATLMFC',
-            '--quiet', '--wait', '--norestart'
-          ) -Wait -PassThru
-          Write-Host "Installer RC=$($proc.ExitCode)"
-          if ($proc.ExitCode -eq 3010) { Write-Host 'MFC installed; reboot pending, ignored' }
-          elseif ($proc.ExitCode -ne 0) { exit $proc.ExitCode }
-          Write-Host '--- verify afxwin.h ---'
-          Get-ChildItem "$VSINST\VC\Tools\MSVC\*\atlmfc\include\afxwin.h" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName }
+          $afx = Get-ChildItem "$VSINST\VC\Tools\MSVC\*\atlmfc\include\afxwin.h" -ErrorAction SilentlyContinue
+          if (-not $afx) { Write-Error 'MFC headers (afxwin.h) not found; this image lacks VC.ATLMFC'; exit 1 }
+          Write-Host "MFC present: $($afx[0].FullName)"
 
       - name: Install vcpkg + OpenSSL / msgpack (static triplet)
         shell: cmd
@@ -99,16 +90,23 @@ jobs:
           Write-Host "--- czdb_lib ---"
           Get-ChildItem czdb_lib | ForEach-Object { Write-Host $_.Name }
 
-      - name: Build WinMTR.exe (x64, retarget v120 -> detected toolset, MFC Static)
+      - name: Build WinMTR.exe (x64, retarget v120 -> detected MFC toolset, MFC Static)
         shell: pwsh
         run: |
           $VSINST = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          # Pick the highest installed MSVC toolset that actually ships MFC (atlmfc), and map its
+          # directory version (e.g. 14.43.x -> v143, 14.4x -> v144, 14.5x -> v145) to PlatformToolset.
           $toolset = $null
-          foreach ($v in @('14.5', '14.4', '14.3', '14.2')) {
-            if (Test-Path "$VSINST\VC\Tools\MSVC\$v*") { $toolset = "v$($v.Replace('.', ''))"; break }
+          foreach ($d in (Get-ChildItem "$VSINST\VC\Tools\MSVC" -Directory | Sort-Object Name -Descending)) {
+            if (Test-Path "$($d.FullName)\atlmfc\include\afxwin.h") {
+              $parts = $d.Name.Split('.')
+              $minor = [int]$parts[1]
+              $toolset = "v14" + [string][math]::Floor($minor / 10)
+              Write-Host "MFC toolset dir $($d.Name) -> PlatformToolset=$toolset"
+              break
+            }
           }
-          if (-not $toolset) { Write-Error 'No MSVC toolset found'; exit 1 }
-          Write-Host "Using PlatformToolset=$toolset"
+          if (-not $toolset) { Write-Error 'No MSVC toolset with MFC found'; exit 1 }
           msbuild WinMTR.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=$toolset /m
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Host '--- Release_x64 contents ---'
