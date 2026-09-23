@@ -18,19 +18,23 @@ jobs:
       - name: Install vcpkg + OpenSSL / msgpack-c
         shell: cmd
         run: |
-          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
-          C:\vcpkg\bootstrap-vcpkg.bat
+          if not exist C:\vcpkg (
+            git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+            C:\vcpkg\bootstrap-vcpkg.bat
+          )
           C:\vcpkg\vcpkg install openssl:x64-windows msgpack-c:x64-windows
 
       - name: Build CZDB db_searcher.dll (+ runtime DLLs)
         shell: cmd
         run: |
+          for /f "tokens=*" %%i in ('"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath') do set VSINST=%%i
+          call "%%VSINST%%\VC\Auxiliary\Build\vcvars64.bat"
           git clone --depth 1 https://github.com/tagphi/czdb-search-c.git C:\czdb-sdk
-          cmake -S C:\czdb-sdk -B C:\czdb-sdk\build -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
-          cmake --build C:\czdb-sdk\build --config Release
+          cmake -S C:\czdb-sdk -B C:\czdb-sdk\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
+          cmake --build C:\czdb-sdk\build
           if not exist czdb_lib mkdir czdb_lib
-          copy /Y C:\czdb-sdk\build\Release\db_searcher.dll czdb_lib\
-          copy /Y C:\czdb-sdk\build\Release\db_searcher.lib czdb_lib\
+          copy /Y C:\czdb-sdk\build\db_searcher.dll czdb_lib\
+          copy /Y C:\czdb-sdk\build\db_searcher.lib czdb_lib\
           for %%D in (libcrypto libssl msgpack) do (
             copy /Y C:\vcpkg\installed\x64-windows\bin\%%D*.dll czdb_lib\ 2>nul
           )
