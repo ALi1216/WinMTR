@@ -1,0 +1,17 @@
+# 纯真社区版 CZDB 解密密钥（含密钥，禁止提交到公开仓库）
+czdb.key
+
+# CZDB SDK 构建产物（db_searcher.lib / *.dll 由使用者自行放置）
+czdb_lib/
+
+# Visual Studio / 构建中间产物
+*.suo
+*.sdf
+*.opensdf
+*.user
+*.user.vcproj
+Debug_x32/
+Release_x32/
+Debug_x64/
+Release_x64/
+ipch/

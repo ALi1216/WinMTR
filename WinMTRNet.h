@@ -13,6 +13,7 @@
 #ifndef WINMTRNET_H_
 #define WINMTRNET_H_
 
+#include "czdb_bridge.h"
 
 class WinMTRDialog;
 
@@ -85,9 +86,13 @@ public:
 	LPFNICMPSENDECHO	lpfnIcmpSendEcho;
 private:
 	HINSTANCE			hICMP_DLL;
+    DBSearcher*         m_czdb;          // 纯真社区版 CZDB 解析器（MEMORY 模式，线程安全）
 
     struct s_nethost	host[MaxHost];
-	HANDLE				ghMutex; 
+	HANDLE				ghMutex;
+
+    void                InitCzdb();       // 初始化 CZDB（构造时调用）
+    void                CloseCzdb();      // 释放 CZDB（析构时调用）
 };
 
 #endif	// ifndef WINMTRNET_H_

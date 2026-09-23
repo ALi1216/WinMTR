@@ -12,10 +12,12 @@
 #include "stdio.h"
 #include "string.h"
 
-#define QQWRY "QQWry.dat"
-#define REDIRECT_MODE_1 0x01
-#define REDIRECT_MODE_2 0x02
-#define MAXBUF 255
+#include "czdb_bridge.h"
+
+// çº¯çœŸç¤¾åŒºç‰ˆ CZDB åº“é…ç½®
+#define CZDB_DB_FILENAME "cz88_public_v4.czdb"
+// é»˜è®¤å¯†é’¥ï¼ˆåŒç›®å½• czdb.key ä¼˜å…ˆï¼›æ­¤å¤„ä»…ä½œå…œåº•ï¼‰
+#define DEFAULT_CZDB_KEY "HziL4SVpdbboh4rfgjRwiA=="
 
 
 #define TRACE_MSG(msg)										\
@@ -48,6 +50,7 @@ WinMTRNet::WinMTRNet(WinMTRDialog *wp) {
 	tracing=false;
 	initialized = false;
 	wmtrdlg = wp;
+	m_czdb = NULL;   // é˜²å¾¡ï¼šæ„é€ æå‰è¿”å›æ—¶ä¹Ÿè¦ä¿è¯ä¸º NULLï¼Œé¿å… DnsResolverThread/ææ„è¯¯ç”¨é‡æŒ‡é’ˆ
 	WSADATA wsaData;
 
     if( WSAStartup(MAKEWORD(2, 2), &wsaData) ) {
@@ -83,6 +86,8 @@ WinMTRNet::WinMTRNet(WinMTRDialog *wp) {
 
 	ResetHops();
 
+	InitCzdb();
+
 	initialized = true;
 	return;
 }
@@ -99,7 +104,9 @@ WinMTRNet::~WinMTRNet()
 		FreeLibrary(hICMP_DLL);
 
 		WSACleanup();
-	
+
+		CloseCzdb();
+
 		CloseHandle(ghMutex);
 	}
 }
@@ -438,259 +445,103 @@ void WinMTRNet::AddXmit(int at)
 	ReleaseMutex(ghMutex);
 }
 
-/*unsigned long getValue( »ñÈ¡ÎÄ¼şÖĞÖ¸¶¨µÄ16½øÖÆ´®µÄÖµ£¬²¢·µ»Ø
-FILE *fp, Ö¸¶¨ÎÄ¼şÖ¸Õë
-unsigned long start, Ö¸¶¨ÎÄ¼şÆ«ÒÆÁ¿
-int length) »ñÈ¡µÄ16½øÖÆ×Ö·û¸öÊı/³¤¶È
-*/
-unsigned long getValue(FILE *fp, unsigned long start, int length)
+
+// ---------- çº¯çœŸç¤¾åŒºç‰ˆ CZDB è¾…åŠ©å‡½æ•° ----------
+
+// æŠŠ CZDB è¿”å›çš„ UTF-8 å½’å±ä¸²ä¸­çš„ en dash(U+2013, "â€“") ä¸ "\t" è§„æ•´æˆ ASCII '-' / ' 'ï¼Œ
+// ä¾¿äºåç»­è½¬æœ¬åœ°ä»£ç é¡µï¼ˆä¸­æ–‡ Windows çš„ GBK ä¸å« en dashï¼‰ã€‚
+static void CzdbNormalize(const char* utf8, char* out, int outLen)
 {
-    unsigned long variable = 0;
-    long val[255], i;
-
-    fseek(fp, start, SEEK_SET);
-    for (i = 0; i<length; i++)
-    {
-        /*¹ıÂË¸ßÎ»£¬Ò»´Î¶ÁÈ¡Ò»¸ö×Ö·û*/
-        val[i] = fgetc(fp) & 0x000000FF;
-    }
-    for (i = length - 1; i >= 0; i--)
-    {
-        /*ÒòÎª¶ÁÈ¡¶à¸ö16½øÖÆ×Ö·û£¬µş¼Ó*/
-        variable = variable * 0x100 + val[i];
-    }
-    return variable;
-};
-
-
-/*int getString( »ñÈ¡ÎÄ¼şÖĞÖ¸¶¨µÄ×Ö·û´®£¬·µ»Ø×Ö·û´®³¤¶È
-FILE *fp, Ö¸¶¨ÎÄ¼şÖ¸Õë
-unsigned long start, Ö¸¶¨ÎÄ¼şÆ«ÒÆÁ¿
-char **string) ÓÃÀ´´æ·Å½«¶ÁÈ¡×Ö·û´®µÄ×Ö·û´®¿Õ¼äµÄÊ×µØÖ·
-*/
-int getString(FILE *fp, unsigned long start, char **string)
-{
-    unsigned long i = 0;
-    char val;
-    fseek(fp, start, SEEK_SET);
-    /*¶ÁÈ¡×Ö·û´®£¬Ö±µ½Óöµ½0x00ÎªÖ¹*/
-    do
-    {
-        val = fgetc(fp);
-        /*ÒÀ´Î·ÅÈëÓÃÀ´´æ´¢µÄ×Ö·û´®¿Õ¼äÖĞ*/
-        *(*string + i) = val;
-        i++;
-    } while (val != 0x00);
-    /*·µ»Ø×Ö·û´®³¤¶È*/
-    return i;
-};
-
-
-/*void getAddress( ¶ÁÈ¡Ö¸¶¨IPµÄ¹ú¼ÒÎ»ÖÃºÍµØÓòÎ»ÖÃ
-FILE *fp, Ö¸¶¨ÎÄ¼şÖ¸Õë
-unsigned long start, Ö¸¶¨IPÔÚË÷ÒıÖĞµÄÎÄ¼şÆ«ÒÆÁ¿
-char **country, ÓÃÀ´´æ·Å¹ú¼ÒÎ»ÖÃµÄ×Ö·û´®¿Õ¼äµÄÊ×µØÖ·
-char **location) ÓÃÀ´´æ·ÅµØÓòÎ»ÖÃµÄ×Ö·û´®¿Õ¼äµÄÊ×µØÖ·
-*/
-void getAddress(FILE *fp, unsigned long start, char **country, char **location)
-{
-    unsigned long redirect_address, counrty_address, location_address;
-    char val;
-
-    start += 4;
-    fseek(fp, start, SEEK_SET);
-    /*¶ÁÈ¡Ê×µØÖ·µÄÖµ*/
-    val = (fgetc(fp) & 0x000000FF);
-
-    if (val == REDIRECT_MODE_1)
-    {
-        /*ÖØ¶¨Ïò1ÀàĞÍµÄ*/
-        redirect_address = getValue(fp, start + 1, 3);
-        fseek(fp, redirect_address, SEEK_SET);
-        /*»ìºÏÀàĞÍ£¬ÖØ¶¨Ïò1ÀàĞÍ½øÈëºóÓöµ½ÖØ¶¨Ïò2ÀàĞÍ
-        ¶ÁÈ¡ÖØ¶¨ÏòºóµÄÄÚÈİ£¬²¢ÉèÖÃµØÓòÎ»ÖÃµÄÎÄ¼şÆ«ÒÆÁ¿*/
-        if ((fgetc(fp) & 0x000000FF) == REDIRECT_MODE_2)
-        {
-            counrty_address = getValue(fp, redirect_address + 1, 3);
-            location_address = redirect_address + 4;
-            getString(fp, counrty_address, country);
-        }
-        /*¶ÁÈ¡ÖØ¶¨Ïò1ºóµÄÄÚÈİ£¬²¢ÉèÖÃµØÓòÎ»ÖÃµÄÎÄ¼şÆ«ÒÆÁ¿*/
-        else
-        {
-            counrty_address = redirect_address;
-            location_address = redirect_address + getString(fp, counrty_address, country);
+    int j = 0;
+    for (int i = 0; utf8[i] != '\0' && j < outLen - 1; ) {
+        unsigned char c = (unsigned char)utf8[i];
+        if (c == 0xE2 && (unsigned char)utf8[i+1] == 0x80 && (unsigned char)utf8[i+2] == 0x93) {
+            out[j++] = '-'; i += 3;
+        } else if (utf8[i] == '\t') {
+            out[j++] = ' '; i += 1;
+        } else {
+            out[j++] = utf8[i++];
         }
     }
-    /*ÖØ¶¨Ïò2ÀàĞÍµÄ*/
-    else if (val == REDIRECT_MODE_2)
-    {
-        counrty_address = getValue(fp, start + 1, 3);
-        location_address = start + 4;
-        getString(fp, counrty_address, country);
-    }
-    else
-    {
-        counrty_address = start;
-        location_address = counrty_address + getString(fp, counrty_address, country);
-    }
+    out[j] = '\0';
+}
 
-    /*¶ÁÈ¡µØÓòÎ»ÖÃ*/
-    fseek(fp, location_address, SEEK_SET);
-    if ((fgetc(fp) & 0x000000FF) == REDIRECT_MODE_2 || (fgetc(fp) & 0x000000FF) == REDIRECT_MODE_1)
-    {
-        location_address = getValue(fp, location_address + 1, 3);
-    }
-    getString(fp, location_address, location);
-
-    return;
-};
-
-
-/*void getHead( ¶ÁÈ¡Ë÷Òı²¿·ÖµÄ·¶Î§£¨ÔÚÎÄ¼şÍ·ÖĞ£¬×îÏÈµÄ2¸ö8Î»16½øÖÆ£©
-FILE *fp, Ö¸¶¨ÎÄ¼şÖ¸Õë
-unsigned long *start, ÎÄ¼şÆ«ÒÆÁ¿£¬Ë÷ÒıµÄÆğÖ¹Î»ÖÃ
-unsigned long *end) ÎÄ¼şÆ«ÒÆÁ¿£¬Ë÷ÒıµÄ½áÊøÎ»ÖÃ
-*/
-void getHead(FILE *fp, unsigned long *start, unsigned long *end)
+// UTF-8 -> æœ¬åœ° ANSI ä»£ç é¡µï¼ˆä¸­æ–‡ Windows ä¸º GBKï¼‰ï¼Œä¾› WinMTR çš„ MultiByte åˆ—è¡¨æ§ä»¶æ˜¾ç¤º
+static void CzdbUtf8ToLocal(const char* utf8, char* out, int outLen)
 {
-    /*Ë÷ÒıµÄÆğÖ¹Î»ÖÃµÄÎÄ¼şÆ«ÒÆÁ¿£¬´æ´¢ÔÚÎÄ¼şÍ·ÖĞµÄÇ°8¸ö16½øÖÆÖĞ
-    ÉèÖÃÆ«ÒÆÁ¿Îª0£¬¶ÁÈ¡4¸ö×Ö·û*/
-    *start = getValue(fp, 0L, 4);
-    /*Ë÷ÒıµÄ½áÊøÎ»ÖÃµÄÎÄ¼şÆ«ÒÆÁ¿£¬´æ´¢ÔÚÎÄ¼şÍ·ÖĞµÄµÚ8¸öµ½µÚ15¸öµÄ16½øÖÆÖĞ
-    ÉèÖÃÆ«ÒÆÁ¿Îª4¸ö×Ö·û£¬ÔÙ¶ÁÈ¡4¸ö×Ö·û*/
-    *end = getValue(fp, 4L, 4);
-};
+    if (outLen <= 1) { if (outLen == 1) out[0] = '\0'; return; }
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
+    if (wlen <= 0) { out[0] = '\0'; return; }
+    wchar_t* w = new wchar_t[wlen];
+    MultiByteToWideChar(CP_UTF8, 0, utf8, -1, w, wlen);
+    WideCharToMultiByte(CP_ACP, 0, w, -1, out, outLen, "?", NULL);
+    delete[] w;
+}
 
-
-/*unsigned long searchIP( ËÑË÷Ö¸¶¨IPÔÚË÷ÒıÇøµÄÎ»ÖÃ£¬²ÉÓÃ¶ş·Ö²éÕÒ·¨£»
-·µ»ØIPÔÚË÷ÒıÇøÓòµÄÎÄ¼şÆ«ÒÆÁ¿
-Ò»ÌõË÷Òı¼ÇÂ¼µÄ½á¹ûÊÇ£¬Ç°4¸ö16½øÖÆ±íÊ¾ÆğÊ¼IPµØÖ·
-ºóÃæ3¸ö16½øÖÆ£¬±íÊ¾¸ÃÆğÊ¼IPÔÚIPĞÅÏ¢¶ÎÖĞµÄÎ»ÖÃ£¬ÎÄ¼şÆ«ÒÆÁ¿
-FILE *fp,
-unsigned long index_start, Ë÷ÒıÆğÊ¼Î»ÖÃµÄÎÄ¼şÆ«ÒÆÁ¿
-unsigned long index_end, Ë÷Òı½áÊøÎ»ÖÃµÄÎÄ¼şÆ«ÒÆÁ¿
-unsigned long ip) ¹Ø¼ü×Ö£¬ÒªË÷ÒıµÄIP
-*/
-unsigned long searchIP(FILE *fp, unsigned long index_start, \
-
-    unsigned long index_end, unsigned long ip)
+// å–å¾—å½“å‰ exe æ‰€åœ¨ç›®å½•ï¼ˆå¸¦ç»“å°¾åæ–œæ ï¼‰
+static void CzdbGetExeDir(char* out, int outLen)
 {
-    unsigned long index_current, index_top, index_bottom;
-    unsigned long record;
-    index_bottom = index_start;
-    index_top = index_end;
-    /*´Ë´¦µÄ7£¬ÊÇÒòÎªÒ»ÌõË÷Òı¼ÇÂ¼µÄ³¤¶ÈÊÇ7*/
-    index_current = ((index_top - index_bottom) / 7 / 2) * 7 + index_bottom;
-    /*¶ş·Ö²éÕÒ·¨*/
-    do{
-        record = getValue(fp, index_current, 4);
-        if (record>ip)
-        {
-            index_top = index_current;
-            index_current = ((index_top - index_bottom) / 14) * 7 + index_bottom;
-        }
-        else
-        {
-            index_bottom = index_current;
-            index_current = ((index_top - index_bottom) / 14) * 7 + index_bottom;
-        }
-    } while (index_bottom<index_current);
-    /*·µ»Ø¹Ø¼ü×ÖIPÔÚË÷ÒıÇøÓòµÄÎÄ¼şÆ«ÒÆÁ¿*/
-    return index_current;
-};
+    char path[MAX_PATH] = {0};
+    GetModuleFileNameA(NULL, path, MAX_PATH);
+    char* slash = strrchr(path, '\\');
+    if (slash) *(slash + 1) = '\0';
+    strncpy(out, path, outLen - 1);
+    out[outLen - 1] = '\0';
+}
 
-
-/*unsigned long putAll( µ¼³öËùÓĞIPĞÅÏ¢µ½ÎÄ¼şÎÄ¼şÖĞ£¬º¯Êı·µ»Øµ¼³ö×ÜÌõÊı
-FILE *fp,
-FILE *out, µ¼³öµÄÎÄ¼şÖ¸Õë£¬±ØĞëÓµÓĞĞ´È¨ÏŞ
-unsigned long index_start, Ë÷ÒıÇøÓòµÄÆğÊ¼ÎÄ¼şÆ«ÒÆÁ¿
-unsigned long index_end) Ë÷ÒıÇøÓòµÄ½áÊøÎÄ¼şÆ«ÒÆÁ¿
-*/
-unsigned long putAll(FILE *fp, FILE *out, unsigned long index_start, unsigned long index_end)
+// è¯»å–åŒç›®å½•ä¸‹çš„ czdb.keyï¼ˆçº¯æ–‡æœ¬å¯†é’¥ï¼‰ï¼›ä¸å­˜åœ¨æˆ–ä¸ºç©ºåˆ™ç”¨ç¼–è¯‘æœŸé»˜è®¤å¯†é’¥
+static void CzdbLoadKey(char* out, int outLen)
 {
-    unsigned long i, count = 0;
-    unsigned long start_ip, end_ip;
-    char *country;
-    char *location;
+    char dir[MAX_PATH] = {0};
+    CzdbGetExeDir(dir, MAX_PATH);
+    char keyfile[MAX_PATH] = {0};
+    strncat(keyfile, dir, MAX_PATH - 1);
+    strncat(keyfile, "czdb.key", MAX_PATH - 1 - strlen(keyfile));
 
-    country = (char*)malloc(255);
-    location = (char*)malloc(255);
-
-    /*´Ë´¦µÄ7£¬ÊÇÒòÎªÒ»ÌõË÷Òı¼ÇÂ¼µÄ³¤¶ÈÊÇ7*/
-    for (i = index_start; i<index_end; i += 7)
-    {
-        /*»ñÈ¡IP¶ÎµÄÆğÊ¼IPºÍ½áÊøIP£¬
-        ÆğÊ¼IPÎªË÷Òı²¿·ÖµÄÇ°4Î»16½øÖÆ
-        ½áÊøIPÔÚIPĞÅÏ¢²¿·ÖµÄÇ°4Î»16½øÖÆÖĞ£¬¿¿Ë÷Òı²¿·ÖÖ¸¶¨µÄÆ«ÒÆÁ¿ÕÒÑ°*/
-        start_ip = getValue(fp, i, 4);
-        end_ip = getValue(fp, getValue(fp, i + 4, 3), 4);
-        /*µ¼³öIPĞÅÏ¢£¬¸ñÊ½ÊÇ
-        ÆğÊ¼IP\t½áÊøIP\t¹ú¼ÒÎ»ÖÃ\tµØÓòÎ»ÖÃ\n*/
-        fprintf(out, "%d.%d.%d.%d", (start_ip & 0xFF000000) >> 0x18, \
-
-            (start_ip & 0x00FF0000) >> 0x10, (start_ip & 0x0000FF00) >> 0x8, start_ip & 0x000000FF);
-        fprintf(out, "\t");
-        fprintf(out, "%d.%d.%d.%d", (end_ip & 0xFF000000) >> 0x18, \
-
-            (end_ip & 0x00FF0000) >> 0x10, (end_ip & 0x0000FF00) >> 0x8, end_ip & 0x000000FF);
-        getAddress(fp, getValue(fp, i + 4, 3), &country, &location);
-        fprintf(out, "\t%s\t%s\n", country, location);
-        count++;
+    FILE* fp = fopen(keyfile, "rb");
+    if (fp) {
+        int n = (int)fread(out, 1, outLen - 1, fp);
+        fclose(fp);
+        while (n > 0 && (out[n-1] == '\n' || out[n-1] == '\r' || out[n-1] == ' ')) out[--n] = '\0';
+        if (n > 0) return;
     }
-    /*·µ»Øµ¼³ö×ÜÌõÊı*/
-    return count;
-};
+    strncpy(out, DEFAULT_CZDB_KEY, outLen - 1);
+    out[outLen - 1] = '\0';
+}
 
-
-/*ÅĞ¶ÏÒ»¸ö×Ö·ûÊÇ·ñÎªÊı×Ö×Ö·û£¬
-Èç¹ûÊÇ£¬·µ»Ø0
-Èç¹û²»ÊÇ£¬·µ»Ø1*/
-int beNumber(char c)
+void WinMTRNet::InitCzdb()
 {
-    if (c >= '0'&&c <= '9')
-        return 0;
-    else
-        return 1;
-};
+    m_czdb = NULL;
+    char dir[MAX_PATH] = {0};
+    CzdbGetExeDir(dir, MAX_PATH);
+    char dbpath[MAX_PATH] = {0};
+    strncat(dbpath, dir, MAX_PATH - 1);
+    strncat(dbpath, CZDB_DB_FILENAME, MAX_PATH - 1 - strlen(dbpath));
 
+    char key[256] = {0};
+    CzdbLoadKey(key, sizeof(key));
 
-/*º¯ÊıµÄ²ÎÊıÊÇÒ»¸ö´æ´¢×ÅIPµØÖ·µÄ×Ö·û´®Ê×µØÖ·
-·µ»Ø¸ÃIPµÄ16½øÖÆ´úÂë
-Èç¹ûÊäÈëµÄIPµØÖ·ÓĞ´íÎó£¬º¯Êı½«·µ»Ø0*/
-unsigned long getIP(char *ip_addr)
-{
-    unsigned long ip = 0;
-    int i, j = 0;
-    /*ÒÀ´Î¶ÁÈ¡×Ö·û´®ÖĞµÄ¸÷¸ö×Ö·û*/
-    for (i = 0; i<strlen(ip_addr); i++)
-    {
-        /*Èç¹ûÊÇIPµØÖ·¼ä¸ôµÄ¡®.¡¯·ûºÅ
-        °Ñµ±Ç°¶ÁÈ¡µ½µÄIP×Ö¶ÎµÄÖµ£¬´æÈëip±äÁ¿ÖĞ
-        £¨×¢Òâ£¬ipÎªµş¼ÓÊ±£¬³ËÒÔ16½øÖÆµÄ0x100£©
-        ²¢Çå³ıÁÙÊ±±äÁ¿µÄÖµ*/
-        if (*(ip_addr + i) == '.')
-        {
-            ip = ip * 0x100 + j;
-            j = 0;
-        }
-        /*ÍùÁÙÊ±±äÁ¿ÖĞĞ´Èëµ±Ç°¶ÁÈ¡µ½µÄIP×Ö¶ÎÖĞµÄ×Ö·ûÖµ
-        µş¼Ó³ËÒÔ10£¬ÒòÎªÊäÈëµÄIPµØÖ·ÊÇ10½øÖÆ*/
-        else
-        {
-            /*ÅĞ¶Ï£¬Èç¹ûÊäÈëµÄIPµØÖ·²»¹æ·¶£¬²»ÊÇ10½øÖÆ×Ö·û
-            º¯Êı½«·µ»Ø0*/
-            if (beNumber(*(ip_addr + i)) == 0)
-                j = j * 10 + *(ip_addr + i) - '0';
-            else
-                return 0;
-        }
+    FILE* test = fopen(dbpath, "rb");
+    if (!test) {
+        TRACE_MSG("CZDB file not found: " << dbpath);
+        return;
     }
-    /*IP×Ö¶ÎÓĞ4¸ö£¬µ«ÊÇ¡®.¡¯Ö»ÓĞ3¸ö£¬µş¼ÓµÚËÄ¸ö×Ö¶ÎÖµ*/
-    ip = ip * 0x100 + j;
-    return ip;
-};
+    fclose(test);
 
+    // å¿…é¡»ç”¨ MEMORY æ¨¡å¼ï¼šçº¿ç¨‹å®‰å…¨ï¼ˆWinMTR æ¯è·³å¯åŠ¨ä¸€ä¸ª DnsResolverThreadï¼‰
+    m_czdb = initDBSearcher(dbpath, key, CZDB_MEMORY);
+    if (!m_czdb) {
+        TRACE_MSG("initDBSearcher failed (wrong key or corrupt db)");
+    }
+}
+
+void WinMTRNet::CloseCzdb()
+{
+    if (m_czdb) {
+        closeDBSearcher(m_czdb);
+        m_czdb = NULL;
+    }
+}
 
 void DnsResolverThread(void *p)
 {
@@ -698,41 +549,33 @@ void DnsResolverThread(void *p)
     dns_resolver_thread *dnt = (dns_resolver_thread*)p;
     WinMTRNet* wn = dnt->winmtr;
 
-    struct hostent *phent;
-
     char buf[100];
     int addr = wn->GetAddr(dnt->index);
     sprintf(buf, "%d.%d.%d.%d", (addr >> 24) & 0xff, (addr >> 16) & 0xff, (addr >> 8) & 0xff, addr & 0xff);
 
-    int haddr = htonl(addr);
-    //phent = gethostbyaddr( (const char*)&haddr, sizeof(int), AF_INET);
-    FILE *fp;
-    unsigned long index_start, index_end, current;
-    char *country;
-    char *location;
-    country = (char*)malloc(MAXBUF);
-    location = (char*)malloc(MAXBUF);
+    if (wn->m_czdb != NULL) {
+        char regionUtf8[512] = {0};
+        if (search(buf, wn->m_czdb, regionUtf8, (int)sizeof(regionUtf8)) == 0 && regionUtf8[0] != '\0') {
+            char norm[512] = {0};
+            CzdbNormalize(regionUtf8, norm, (int)sizeof(norm));
+            char local[512] = {0};
+            CzdbUtf8ToLocal(norm, local, (int)sizeof(local));
+            std::string h = std::string(buf) + " " + std::string(local);
+            char *writable = new char[h.size() + 1];
+            std::copy(h.begin(), h.end(), writable);
+            writable[h.size()] = '\0';
+            wn->SetName(dnt->index, writable);
+            delete[] writable;
+        } else {
+            // search å¼‚å¸¸ï¼šé€€å›åªæ˜¾ç¤º IP
+            wn->SetName(dnt->index, buf);
+        }
+    } else {
+        // CZDB æœªåˆå§‹åŒ–ï¼ˆDLL/åº“æ–‡ä»¶ç¼ºå¤±ï¼‰ï¼šé€€å›åªæ˜¾ç¤º IP
+        wn->SetName(dnt->index, buf);
+    }
 
-    fp = fopen(QQWRY, "rb");
-    
-    getHead(fp, &index_start, &index_end);
-    getAddress(fp, getValue(fp, index_end + 4, 3), &country, &location);
-    //ËÑË÷IPÔÚË÷ÒıÇøÓòµÄÌõÄ¿µÄÆ«ÒÆÁ¿
-    current = searchIP(fp, index_start, index_end, addr);
-    //»ñÈ¡¸ÃIP¶ÔÒòµÄ¹ú¼ÒµØÖ·ºÍµØÓòµØÖ·
-    getAddress(fp, getValue(fp, current + 4, 3), &country, &location);
-    std::string l = std::string(location);
-    std::string c = std::string(country);
-    std::string h;
-    std::string blank = std::string(" ");
-    std::string ipaddr = std::string(buf);
-    h = ipaddr + blank + c + blank + l;
-    char * writable = new char[h.size() + 1];
-    std::copy(h.begin(), h.end(), writable);
-    writable[h.size()] = '\0';
-    wn->SetName(dnt->index, writable);
     delete p;
-    fclose(fp);
     TRACE_MSG("DNS resolver thread stopped.");
     _endthread();
 }
