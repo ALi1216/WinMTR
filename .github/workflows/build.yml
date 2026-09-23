@@ -16,19 +16,22 @@ jobs:
         uses: microsoft/setup-msbuild@v2
 
       - name: Install MFC/ATL component
-        shell: cmd
+        shell: pwsh
         run: |
-          for /f "tokens=*" %%i in ('"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath') do set VSINST=%%i
-          echo VSINST=%%VSINST%%
-          "%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vs_installer.exe" modify ^
-            --installPath "%%VSINST%%" ^
-            --add Microsoft.VisualStudio.Component.VC.ATLMFC ^
-            --quiet --wait --norestart
-          set RC=%%ERRORLEVEL%%
-          echo Installer RC=%%RC%%
-          if %%RC%%==3010 (echo MFC installed (reboot pending, ignored)) else if not %%RC%%==0 (exit /b %%RC%%)
-          echo --- verify afxwin.h present ---
-          dir /s /b "%%VSINST%%\VC\Tools\MSVC\*\atlmfc\include\afxwin.h"
+          $VSINST = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          Write-Host "VSINST=$VSINST"
+          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+          $proc = Start-Process -FilePath $installer -ArgumentList @(
+            'modify',
+            '--installPath', $VSINST,
+            '--add', 'Microsoft.VisualStudio.Component.VC.ATLMFC',
+            '--quiet', '--wait', '--norestart'
+          ) -Wait -PassThru
+          Write-Host "Installer RC=$($proc.ExitCode)"
+          if ($proc.ExitCode -eq 3010) { Write-Host 'MFC installed; reboot pending, ignored' }
+          elseif ($proc.ExitCode -ne 0) { exit $proc.ExitCode }
+          Write-Host '--- verify afxwin.h ---'
+          Get-ChildItem "$VSINST\VC\Tools\MSVC\*\atlmfc\include\afxwin.h" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName }
 
       - name: Install vcpkg + OpenSSL / msgpack (static triplet)
         shell: cmd
@@ -97,19 +100,19 @@ jobs:
           Get-ChildItem czdb_lib | ForEach-Object { Write-Host $_.Name }
 
       - name: Build WinMTR.exe (x64, retarget v120 -> detected toolset, MFC Static)
-        shell: cmd
+        shell: pwsh
         run: |
-          for /f "tokens=*" %%i in ('"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath') do set VSINST=%%i
-          set TOOLSET=
-          if exist "%%VSINST%%\VC\Tools\MSVC\14.5*" (set TOOLSET=v150)
-          if exist "%%VSINST%%\VC\Tools\MSVC\14.4*" (set TOOLSET=v144)
-          if exist "%%VSINST%%\VC\Tools\MSVC\14.3*" (set TOOLSET=v143)
-          if exist "%%VSINST%%\VC\Tools\MSVC\14.2*" (set TOOLSET=v142)
-          if not defined TOOLSET (echo No MSVC toolset found & exit /b 1)
-          echo Using PlatformToolset=%%TOOLSET%%
-          msbuild WinMTR.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=%%TOOLSET%% /m || exit /b 1
-          echo --- Release_x64 contents ---
-          dir Release_x64
+          $VSINST = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $toolset = $null
+          foreach ($v in @('14.5', '14.4', '14.3', '14.2')) {
+            if (Test-Path "$VSINST\VC\Tools\MSVC\$v*") { $toolset = "v$($v.Replace('.', ''))"; break }
+          }
+          if (-not $toolset) { Write-Error 'No MSVC toolset found'; exit 1 }
+          Write-Host "Using PlatformToolset=$toolset"
+          msbuild WinMTR.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=$toolset /m
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host '--- Release_x64 contents ---'
+          Get-ChildItem Release_x64 | ForEach-Object { Write-Host $_.Name }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
