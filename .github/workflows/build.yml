@@ -51,8 +51,11 @@ jobs:
           # and tolerates a header-only msgpack.
           $cmake = Get-Content C:\czdb-sdk\CMakeLists.txt -Raw
           $start = $cmake.IndexOf('# Handle MsgPack differently for Windows and Unix')
-          $end = $cmake.IndexOf('else()', $start)
-          if ($start -lt 0 -or $end -lt 0) { throw "Could not locate msgpack block in CMakeLists.txt" }
+          # The WIN32 msgpack block contains an INNER if/else (MSGPACK_INCLUDE_DIR); the outer
+          # if(WIN32)/else() boundary is the 'else()' that follows the inner 'endif()'.
+          $innerEnd = $cmake.IndexOf('endif()', $start)
+          $end = $cmake.IndexOf('else()', $innerEnd)
+          if ($start -lt 0 -or $innerEnd -lt 0 -or $end -lt 0) { throw "Could not locate msgpack block in CMakeLists.txt" }
           $newblock = @'
           if(WIN32)
               find_path(MSGPACK_INCLUDE_DIR NAMES msgpack.h)
