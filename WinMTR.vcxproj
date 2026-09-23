@@ -126,7 +126,7 @@
       <UACExecutionLevel>AsInvoker</UACExecutionLevel>
       <EnableUAC>false</EnableUAC>
       <UACUIAccess>true</UACUIAccess>
-          <AdditionalLibraryDirectories>$(ProjectDir)czdb_lib;%(AdditionalDependencies)</AdditionalLibraryDirectories>
+          <AdditionalLibraryDirectories>$(ProjectDir)czdb_lib</AdditionalLibraryDirectories>
       </Link>
       <PostBuildEvent>
       <Command>xcopy /Y /D "$(ProjectDir)czdb_lib\*.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 || exit /b 0</Command>
@@ -169,7 +169,7 @@
       <UACExecutionLevel>AsInvoker</UACExecutionLevel>
       <EnableUAC>false</EnableUAC>
       <UACUIAccess>true</UACUIAccess>
-          <AdditionalLibraryDirectories>$(ProjectDir)czdb_lib;%(AdditionalDependencies)</AdditionalLibraryDirectories>
+          <AdditionalLibraryDirectories>$(ProjectDir)czdb_lib</AdditionalLibraryDirectories>
       </Link>
       <PostBuildEvent>
       <Command>xcopy /Y /D "$(ProjectDir)czdb_lib\*.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 || exit /b 0</Command>
@@ -216,7 +216,7 @@
       <UACExecutionLevel>AsInvoker</UACExecutionLevel>
       <EnableUAC>false</EnableUAC>
       <UACUIAccess>true</UACUIAccess>
-          <AdditionalLibraryDirectories>$(ProjectDir)czdb_lib;%(AdditionalDependencies)</AdditionalLibraryDirectories>
+          <AdditionalLibraryDirectories>$(ProjectDir)czdb_lib</AdditionalLibraryDirectories>
       </Link>
       <PostBuildEvent>
       <Command>xcopy /Y /D "$(ProjectDir)czdb_lib\*.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 || exit /b 0</Command>
@@ -261,7 +261,7 @@
       <UACExecutionLevel>AsInvoker</UACExecutionLevel>
       <EnableUAC>false</EnableUAC>
       <UACUIAccess>true</UACUIAccess>
-          <AdditionalLibraryDirectories>$(ProjectDir)czdb_lib;%(AdditionalDependencies)</AdditionalLibraryDirectories>
+          <AdditionalLibraryDirectories>$(ProjectDir)czdb_lib</AdditionalLibraryDirectories>
       </Link>
       <PostBuildEvent>
       <Command>xcopy /Y /D "$(ProjectDir)czdb_lib\*.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 || exit /b 0</Command>
