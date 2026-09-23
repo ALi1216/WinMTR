@@ -12,45 +12,102 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup MSBuild (VS2022 / v143)
+      - name: Setup MSBuild (VS2022+)
         uses: microsoft/setup-msbuild@v2
 
-      - name: Install MFC/ATL component (windows-latest 默认未装)
+      - name: Install MFC/ATL component
         shell: cmd
         run: |
           for /f "tokens=*" %%i in ('"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath') do set VSINST=%%i
-          "%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\setup.exe" modify --installPath "%%VSINST%%" --add Microsoft.VisualStudio.Component.VC.ATLMFC --quiet --wait
+          echo VSINST=%%VSINST%%
+          "%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vs_installer.exe" modify ^
+            --installPath "%%VSINST%%" ^
+            --add Microsoft.VisualStudio.Component.VC.ATLMFC ^
+            --quiet --wait --norestart
+          set RC=%%ERRORLEVEL%%
+          echo Installer RC=%%RC%%
+          if %%RC%%==3010 (echo MFC installed (reboot pending, ignored)) else if not %%RC%%==0 (exit /b %%RC%%)
+          echo --- verify afxwin.h present ---
+          dir /s /b "%%VSINST%%\VC\Tools\MSVC\*\atlmfc\include\afxwin.h"
 
-      - name: Install vcpkg + OpenSSL / msgpack-c
+      - name: Install vcpkg + OpenSSL / msgpack (static triplet)
         shell: cmd
         run: |
           if not exist C:\vcpkg (
             git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
             C:\vcpkg\bootstrap-vcpkg.bat
           )
-          C:\vcpkg\vcpkg install openssl:x64-windows msgpack-c:x64-windows
+          C:\vcpkg\vcpkg install openssl:x64-windows-static msgpack-c:x64-windows-static
 
-      - name: Build CZDB db_searcher.dll (+ runtime DLLs)
+      - name: Build CZDB db_searcher.dll (static CRT + static OpenSSL/msgpack)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $VSINST = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          Write-Host "VSINST=$VSINST"
+
+          if (-not (Test-Path C:\czdb-sdk)) {
+            git clone --depth 1 https://github.com/tagphi/czdb-search-c.git C:\czdb-sdk
+          }
+
+          # The upstream CMakeLists hardcodes C:/vcpkg/installed/x64-windows with NO_DEFAULT_PATH
+          # and looks for a 'msgpack-c'/'msgpack' .lib (vcpkg actually ships 'msgpackc.lib', and
+          # under the static triplet the path is x64-windows-static). Replace the WIN32 msgpack
+          # discovery block with one that honours CMAKE_PREFIX_PATH (set by the vcpkg toolchain)
+          # and tolerates a header-only msgpack.
+          $cmake = Get-Content C:\czdb-sdk\CMakeLists.txt -Raw
+          $start = $cmake.IndexOf('# Handle MsgPack differently for Windows and Unix')
+          $end = $cmake.IndexOf('else()', $start)
+          if ($start -lt 0 -or $end -lt 0) { throw "Could not locate msgpack block in CMakeLists.txt" }
+          $newblock = @'
+          if(WIN32)
+              find_path(MSGPACK_INCLUDE_DIR NAMES msgpack.h)
+              find_library(MSGPACK_LIBRARY NAMES msgpackc msgpack-c msgpack libmsgpack)
+              if(MSGPACK_INCLUDE_DIR)
+                  include_directories(${MSGPACK_INCLUDE_DIR})
+                  if(MSGPACK_LIBRARY)
+                      target_link_libraries(db_searcher ${MSGPACK_LIBRARY})
+                      target_link_libraries(CZDBSearcher ${MSGPACK_LIBRARY})
+                  endif()
+              else()
+                  message(FATAL_ERROR "MsgPack headers not found")
+              endif()
+          '@
+          $cmake = $cmake.Substring(0, $start) + $newblock + $cmake.Substring($end)
+          Set-Content C:\czdb-sdk\CMakeLists.txt $cmake -NoNewline
+          Write-Host "patched CMakeLists msgpack block"
+
+          $vcvars = "`"$VSINST\VC\Auxiliary\Build\vcvars64.bat`""
+          $script = @"
+          call $vcvars
+          if not exist C:\czdb-sdk\build mkdir C:\czdb-sdk\build
+          cmake -S C:\czdb-sdk -B C:\czdb-sdk\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DCMAKE_C_FLAGS=/MT -DCMAKE_CXX_FLAGS=/MT -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
+          if errorlevel 1 exit /b 1
+          cmake --build C:\czdb-sdk\build
+          if errorlevel 1 exit /b 1
+          "@
+          Set-Content C:\czdb-sdk\build_czdb.bat $script -NoNewline
+          cmd /c C:\czdb-sdk\build_czdb.bat
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          if (-not (Test-Path czdb_lib)) { New-Item -ItemType Directory -Path czdb_lib | Out-Null }
+          Copy-Item C:\czdb-sdk\build\db_searcher.dll czdb_lib\ -Force
+          Copy-Item C:\czdb-sdk\build\db_searcher.lib czdb_lib\ -Force
+          Write-Host "--- czdb_lib ---"
+          Get-ChildItem czdb_lib | ForEach-Object { Write-Host $_.Name }
+
+      - name: Build WinMTR.exe (x64, retarget v120 -> detected toolset, MFC Static)
         shell: cmd
         run: |
           for /f "tokens=*" %%i in ('"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath') do set VSINST=%%i
-          call "%%VSINST%%\VC\Auxiliary\Build\vcvars64.bat"
-          git clone --depth 1 https://github.com/tagphi/czdb-search-c.git C:\czdb-sdk
-          cmake -S C:\czdb-sdk -B C:\czdb-sdk\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
-          cmake --build C:\czdb-sdk\build || exit /b 1
-          if not exist czdb_lib mkdir czdb_lib
-          copy /Y C:\czdb-sdk\build\db_searcher.dll czdb_lib\
-          copy /Y C:\czdb-sdk\build\db_searcher.lib czdb_lib\
-          for %%D in (libcrypto libssl msgpack) do (
-            copy /Y C:\vcpkg\installed\x64-windows\bin\%%D*.dll czdb_lib\ 2>nul
-          )
-          echo --- czdb_lib contents ---
-          dir czdb_lib
-
-      - name: Build WinMTR.exe (x64, retarget v120 -> v143, MFC Static)
-        shell: cmd
-        run: |
-          msbuild WinMTR.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /m || exit /b 1
+          set TOOLSET=
+          if exist "%%VSINST%%\VC\Tools\MSVC\14.5*" (set TOOLSET=v150)
+          if exist "%%VSINST%%\VC\Tools\MSVC\14.4*" (set TOOLSET=v144)
+          if exist "%%VSINST%%\VC\Tools\MSVC\14.3*" (set TOOLSET=v143)
+          if exist "%%VSINST%%\VC\Tools\MSVC\14.2*" (set TOOLSET=v142)
+          if not defined TOOLSET (echo No MSVC toolset found & exit /b 1)
+          echo Using PlatformToolset=%%TOOLSET%%
+          msbuild WinMTR.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=%%TOOLSET%% /m || exit /b 1
           echo --- Release_x64 contents ---
           dir Release_x64
 
