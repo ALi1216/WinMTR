@@ -1,0 +1,51 @@
+name: Build WinMTR (CZDB)
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild (VS2022 / v143)
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Install vcpkg + OpenSSL / msgpack-c
+        shell: cmd
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+          C:\vcpkg\bootstrap-vcpkg.bat
+          C:\vcpkg\vcpkg install openssl:x64-windows msgpack-c:x64-windows
+
+      - name: Build CZDB db_searcher.dll (+ runtime DLLs)
+        shell: cmd
+        run: |
+          git clone --depth 1 https://github.com/tagphi/czdb-search-c.git C:\czdb-sdk
+          cmake -S C:\czdb-sdk -B C:\czdb-sdk\build -G "Visual Studio 17 2022" -A x64 -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
+          cmake --build C:\czdb-sdk\build --config Release
+          if not exist czdb_lib mkdir czdb_lib
+          copy /Y C:\czdb-sdk\build\Release\db_searcher.dll czdb_lib\
+          copy /Y C:\czdb-sdk\build\Release\db_searcher.lib czdb_lib\
+          for %%D in (libcrypto libssl msgpack) do (
+            copy /Y C:\vcpkg\installed\x64-windows\bin\%%D*.dll czdb_lib\ 2>nul
+          )
+          echo --- czdb_lib contents ---
+          dir czdb_lib
+
+      - name: Build WinMTR.exe (x64, retarget v120 -> v143)
+        shell: cmd
+        run: |
+          msbuild WinMTR.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /m
+          echo --- Release_x64 contents ---
+          dir Release_x64
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WinMTR-CZDB-x64
+          path: Release_x64
