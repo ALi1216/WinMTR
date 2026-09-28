@@ -57,6 +57,7 @@ Please report it to us to make sure it’s not a bug in the application.
 
 
 *** Changelog ***
+23.09.2026 - Version v0.93 is out, adding IP geolocation / attribution recognition (China CZDB / cz88 database via db_searcher.dll).
 31.01.2011 - Version v0.92 is out, fixing reporting errors for very slow connections.
 11.01.2011 - Version v0.91 is out under GPL v2, by popular request.
 24.12.2010 - New version! for 32 and 64 bit Operating Systems. Now works on Windows 7 as a regular user. Various bug fixes. License changed from GPL to commercial, but not for long ;-) (v0.9) 
