@@ -12,143 +12,47 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup MSBuild (VS2022+)
+      - name: Setup MSBuild (VS2022 / v143)
         uses: microsoft/setup-msbuild@v2
 
-      - name: Verify MFC/ATL is available
-        shell: pwsh
+      - name: Install MFC/ATL component (windows-latest 默认未装)
+        shell: cmd
         run: |
-          $VSINST = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          Write-Host "VSINST=$VSINST"
-          $afx = Get-ChildItem "$VSINST\VC\Tools\MSVC\*\atlmfc\include\afxwin.h" -ErrorAction SilentlyContinue
-          if (-not $afx) { Write-Error 'MFC headers (afxwin.h) not found; this image lacks VC.ATLMFC'; exit 1 }
-          Write-Host "MFC present: $($afx[0].FullName)"
+          for /f "tokens=*" %%i in ('"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath') do set VSINST=%%i
+          "%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\setup.exe" modify --installPath "%%VSINST%%" --add Microsoft.VisualStudio.Component.VC.ATLMFC --quiet --wait
 
-      - name: Install vcpkg + OpenSSL / msgpack (static triplet)
+      - name: Install vcpkg + OpenSSL / msgpack-c
         shell: cmd
         run: |
           if not exist C:\vcpkg (
             git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
             C:\vcpkg\bootstrap-vcpkg.bat
           )
-          C:\vcpkg\vcpkg install openssl:x64-windows-static msgpack-c:x64-windows-static
+          C:\vcpkg\vcpkg install openssl:x64-windows msgpack-c:x64-windows
 
-      - name: Build CZDB db_searcher.dll (static CRT + static OpenSSL/msgpack)
-        shell: pwsh
+      - name: Build CZDB db_searcher.dll (+ runtime DLLs)
+        shell: cmd
         run: |
-          $ErrorActionPreference = 'Stop'
-          $VSINST = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          Write-Host "VSINST=$VSINST"
-
-          if (-not (Test-Path C:\czdb-sdk)) {
-            git clone --depth 1 https://github.com/tagphi/czdb-search-c.git C:\czdb-sdk
-          }
-
-          # The upstream CMakeLists.txt is broken on Windows: its msgpack discovery
-          # hardcodes C:/vcpkg/installed/x64-windows with NO_DEFAULT_PATH and looks for a
-          # non-existent 'msgpack-c'/'msgpack' .lib. Overwrite it with a minimal, correct
-          # CMakeLists that statically links vcpkg's OpenSSL + msgpack-c and exports all symbols.
-          $myCMake = @'
-          cmake_minimum_required(VERSION 3.10)
-          project(CZDBSearcher C)
-
-          set(CMAKE_C_STANDARD 99)
-          set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
-
-          if(WIN32)
-              set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS TRUE)
-              add_definitions(-DWIN32_LEAN_AND_MEAN)
-              add_definitions(-D_CRT_SECURE_NO_WARNINGS)
-              set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /W3")
-          endif()
-
-          set(LIB_SOURCES
-              db_searcher.c
-              byte_utils.c
-              hyper_header_block.c
-              decrypted_block.c
+          for /f "tokens=*" %%i in ('"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath') do set VSINST=%%i
+          call "%%VSINST%%\VC\Auxiliary\Build\vcvars64.bat"
+          git clone --depth 1 https://github.com/tagphi/czdb-search-c.git C:\czdb-sdk
+          cmake -S C:\czdb-sdk -B C:\czdb-sdk\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
+          cmake --build C:\czdb-sdk\build || exit /b 1
+          if not exist czdb_lib mkdir czdb_lib
+          copy /Y C:\czdb-sdk\build\db_searcher.dll czdb_lib\
+          copy /Y C:\czdb-sdk\build\db_searcher.lib czdb_lib\
+          for %%D in (libcrypto libssl msgpack) do (
+            copy /Y C:\vcpkg\installed\x64-windows\bin\%%D*.dll czdb_lib\ 2>nul
           )
+          echo --- czdb_lib contents ---
+          dir czdb_lib
 
-          add_library(db_searcher SHARED ${LIB_SOURCES})
-          target_compile_definitions(db_searcher PRIVATE BUILDING_DB_SEARCHER_DLL)
-
-          if(WIN32)
-              set_target_properties(db_searcher PROPERTIES PREFIX "")
-              set_target_properties(db_searcher PROPERTIES OUTPUT_NAME "db_searcher")
-              set_target_properties(db_searcher PROPERTIES SUFFIX ".dll")
-              target_link_libraries(db_searcher ws2_32)
-          endif()
-
-          find_package(OpenSSL REQUIRED)
-          target_include_directories(db_searcher PRIVATE ${OPENSSL_INCLUDE_DIR})
-          target_link_libraries(db_searcher OpenSSL::SSL OpenSSL::Crypto)
-
-          find_package(msgpack-c CONFIG QUIET)
-          if(msgpack-c_FOUND)
-              target_link_libraries(db_searcher msgpack-c)
-          else()
-              find_package(msgpack CONFIG QUIET)
-              if(msgpack_FOUND)
-                  target_link_libraries(db_searcher msgpackc)
-              else()
-                  find_library(MSGPACK_LIBRARY NAMES msgpackc msgpack-c libmsgpack)
-                  if(MSGPACK_LIBRARY)
-                      target_link_libraries(db_searcher ${MSGPACK_LIBRARY})
-                  else()
-                      message(FATAL_ERROR "msgpack-c not found; install msgpack-c:x64-windows-static")
-                  endif()
-              endif()
-          endif()
-
-          configure_file(
-              "${CMAKE_CURRENT_SOURCE_DIR}/config.h.in"
-              "${CMAKE_CURRENT_BINARY_DIR}/config.h"
-          )
-          target_include_directories(db_searcher PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
-          '@
-          Set-Content C:\czdb-sdk\CMakeLists.txt $myCMake -NoNewline
-          Write-Host "wrote custom CMakeLists.txt"
-
-          $vcvars = "`"$VSINST\VC\Auxiliary\Build\vcvars64.bat`""
-          $script = @"
-          call $vcvars
-          if not exist C:\czdb-sdk\build mkdir C:\czdb-sdk\build
-          cmake -S C:\czdb-sdk -B C:\czdb-sdk\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DCMAKE_C_FLAGS=/MT -DCMAKE_CXX_FLAGS=/MT -DVCPKG_TARGET_TRIPLET=x64-windows-static -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake
-          if errorlevel 1 exit /b 1
-          cmake --build C:\czdb-sdk\build
-          if errorlevel 1 exit /b 1
-          "@
-          Set-Content C:\czdb-sdk\build_czdb.bat $script -NoNewline
-          cmd /c C:\czdb-sdk\build_czdb.bat
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-          if (-not (Test-Path czdb_lib)) { New-Item -ItemType Directory -Path czdb_lib | Out-Null }
-          Copy-Item C:\czdb-sdk\build\db_searcher.dll czdb_lib\ -Force
-          Copy-Item C:\czdb-sdk\build\db_searcher.lib czdb_lib\ -Force
-          Write-Host "--- czdb_lib ---"
-          Get-ChildItem czdb_lib | ForEach-Object { Write-Host $_.Name }
-
-      - name: Build WinMTR.exe (x64, retarget v120 -> detected MFC toolset, MFC Static)
-        shell: pwsh
+      - name: Build WinMTR.exe (x64, retarget v120 -> v143, MFC Static)
+        shell: cmd
         run: |
-          $VSINST = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          # Pick the highest installed MSVC toolset that actually ships MFC (atlmfc), and map its
-          # directory version (e.g. 14.43.x -> v143, 14.4x -> v144, 14.5x -> v145) to PlatformToolset.
-          $toolset = $null
-          foreach ($d in (Get-ChildItem "$VSINST\VC\Tools\MSVC" -Directory | Sort-Object Name -Descending)) {
-            if (Test-Path "$($d.FullName)\atlmfc\include\afxwin.h") {
-              $parts = $d.Name.Split('.')
-              $minor = [int]$parts[1]
-              $toolset = "v14" + [string][math]::Floor($minor / 10)
-              Write-Host "MFC toolset dir $($d.Name) -> PlatformToolset=$toolset"
-              break
-            }
-          }
-          if (-not $toolset) { Write-Error 'No MSVC toolset with MFC found'; exit 1 }
-          msbuild WinMTR.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=$toolset /m
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Write-Host '--- Release_x64 contents ---'
-          Get-ChildItem Release_x64 | ForEach-Object { Write-Host $_.Name }
+          msbuild WinMTR.sln /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /m || exit /b 1
+          echo --- Release_x64 contents ---
+          dir Release_x64
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
