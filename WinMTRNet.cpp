@@ -553,9 +553,9 @@ void DnsResolverThread(void *p)
     int addr = wn->GetAddr(dnt->index);
     sprintf(buf, "%d.%d.%d.%d", (addr >> 24) & 0xff, (addr >> 16) & 0xff, (addr >> 8) & 0xff, addr & 0xff);
 
-    if (wn->m_czdb != NULL) {
+    if (wn->GetCzdb() != NULL) {
         char regionUtf8[512] = {0};
-        if (search(buf, wn->m_czdb, regionUtf8, (int)sizeof(regionUtf8)) == 0 && regionUtf8[0] != '\0') {
+        if (search(buf, wn->GetCzdb(), regionUtf8, (int)sizeof(regionUtf8)) == 0 && regionUtf8[0] != '\0') {
             char norm[512] = {0};
             CzdbNormalize(regionUtf8, norm, (int)sizeof(norm));
             char local[512] = {0};
