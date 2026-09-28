@@ -117,9 +117,9 @@ BOOL WinMTRDialog::OnInitDialog()
 	CDialog::OnInitDialog();
 
 	#ifndef  _WIN64
-	char caption[] = {"WinMTR v0.92 32 bit by Appnor MSP - www.winmtr.net"};
+	char caption[] = {"WinMTR v0.93 32 bit by Appnor MSP - www.winmtr.net"};
 	#else
-	char caption[] = {"WinMTR v0.92 64 bit by Appnor MSP - www.winmtr.net"};
+	char caption[] = {"WinMTR v0.93 64 bit by Appnor MSP - www.winmtr.net"};
 	#endif
 
 	SetTimer(1, WINMTR_DIALOG_TIMER, NULL);
