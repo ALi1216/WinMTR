@@ -44,35 +44,70 @@ jobs:
             git clone --depth 1 https://github.com/tagphi/czdb-search-c.git C:\czdb-sdk
           }
 
-          # The upstream CMakeLists hardcodes C:/vcpkg/installed/x64-windows with NO_DEFAULT_PATH
-          # and looks for a 'msgpack-c'/'msgpack' .lib (vcpkg actually ships 'msgpackc.lib', and
-          # under the static triplet the path is x64-windows-static). Replace the WIN32 msgpack
-          # discovery block with one that honours CMAKE_PREFIX_PATH (set by the vcpkg toolchain)
-          # and tolerates a header-only msgpack.
-          $cmake = Get-Content C:\czdb-sdk\CMakeLists.txt -Raw
-          $start = $cmake.IndexOf('# Handle MsgPack differently for Windows and Unix')
-          # The WIN32 msgpack block contains an INNER if/else (MSGPACK_INCLUDE_DIR); the outer
-          # if(WIN32)/else() boundary is the 'else()' that follows the inner 'endif()'.
-          $innerEnd = $cmake.IndexOf('endif()', $start)
-          $end = $cmake.IndexOf('else()', $innerEnd)
-          if ($start -lt 0 -or $innerEnd -lt 0 -or $end -lt 0) { throw "Could not locate msgpack block in CMakeLists.txt" }
-          $newblock = @'
+          # The upstream CMakeLists.txt is broken on Windows: its msgpack discovery
+          # hardcodes C:/vcpkg/installed/x64-windows with NO_DEFAULT_PATH and looks for a
+          # non-existent 'msgpack-c'/'msgpack' .lib. Overwrite it with a minimal, correct
+          # CMakeLists that statically links vcpkg's OpenSSL + msgpack-c and exports all symbols.
+          $myCMake = @'
+          cmake_minimum_required(VERSION 3.10)
+          project(CZDBSearcher C)
+
+          set(CMAKE_C_STANDARD 99)
+          set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
+
           if(WIN32)
-              find_path(MSGPACK_INCLUDE_DIR NAMES msgpack.h)
-              find_library(MSGPACK_LIBRARY NAMES msgpackc msgpack-c msgpack libmsgpack)
-              if(MSGPACK_INCLUDE_DIR)
-                  include_directories(${MSGPACK_INCLUDE_DIR})
+              set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS TRUE)
+              add_definitions(-DWIN32_LEAN_AND_MEAN)
+              add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+              set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /W3")
+          endif()
+
+          set(LIB_SOURCES
+              db_searcher.c
+              byte_utils.c
+              hyper_header_block.c
+              decrypted_block.c
+          )
+
+          add_library(db_searcher SHARED ${LIB_SOURCES})
+          target_compile_definitions(db_searcher PRIVATE BUILDING_DB_SEARCHER_DLL)
+
+          if(WIN32)
+              set_target_properties(db_searcher PROPERTIES PREFIX "")
+              set_target_properties(db_searcher PROPERTIES OUTPUT_NAME "db_searcher")
+              set_target_properties(db_searcher PROPERTIES SUFFIX ".dll")
+              target_link_libraries(db_searcher ws2_32)
+          endif()
+
+          find_package(OpenSSL REQUIRED)
+          target_include_directories(db_searcher PRIVATE ${OPENSSL_INCLUDE_DIR})
+          target_link_libraries(db_searcher OpenSSL::SSL OpenSSL::Crypto)
+
+          find_package(msgpack-c CONFIG QUIET)
+          if(msgpack-c_FOUND)
+              target_link_libraries(db_searcher msgpack-c)
+          else()
+              find_package(msgpack CONFIG QUIET)
+              if(msgpack_FOUND)
+                  target_link_libraries(db_searcher msgpackc)
+              else()
+                  find_library(MSGPACK_LIBRARY NAMES msgpackc msgpack-c libmsgpack)
                   if(MSGPACK_LIBRARY)
                       target_link_libraries(db_searcher ${MSGPACK_LIBRARY})
-                      target_link_libraries(CZDBSearcher ${MSGPACK_LIBRARY})
+                  else()
+                      message(FATAL_ERROR "msgpack-c not found; install msgpack-c:x64-windows-static")
                   endif()
-              else()
-                  message(FATAL_ERROR "MsgPack headers not found")
               endif()
+          endif()
+
+          configure_file(
+              "${CMAKE_CURRENT_SOURCE_DIR}/config.h.in"
+              "${CMAKE_CURRENT_BINARY_DIR}/config.h"
+          )
+          target_include_directories(db_searcher PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
           '@
-          $cmake = $cmake.Substring(0, $start) + $newblock + $cmake.Substring($end)
-          Set-Content C:\czdb-sdk\CMakeLists.txt $cmake -NoNewline
-          Write-Host "patched CMakeLists msgpack block"
+          Set-Content C:\czdb-sdk\CMakeLists.txt $myCMake -NoNewline
+          Write-Host "wrote custom CMakeLists.txt"
 
           $vcvars = "`"$VSINST\VC\Auxiliary\Build\vcvars64.bat`""
           $script = @"
