@@ -84,6 +84,8 @@ public:
 	LPFNICMPCREATEFILE	lpfnIcmpCreateFile;
 	LPFNICMPCLOSEHANDLE lpfnIcmpCloseHandle;
 	LPFNICMPSENDECHO	lpfnIcmpSendEcho;
+	DBSearcher* GetCzdb() const { return m_czdb; }
+
 private:
 	HINSTANCE			hICMP_DLL;
     DBSearcher*         m_czdb;          // 纯真社区版 CZDB 解析器（MEMORY 模式，线程安全）
