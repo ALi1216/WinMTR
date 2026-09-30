@@ -70,6 +70,7 @@ WinMTRDialog::WinMTRDialog(CWnd* pParent)
 	interval = DEFAULT_INTERVAL;
 	pingsize = DEFAULT_PING_SIZE;
 	maxLRU = DEFAULT_MAX_LRU;
+	packetsPerTest = DEFAULT_PACKETS_PER_TEST;
 	nrLRU = 0;
 
 	hasIntervalFromCmdLine = false;
@@ -283,8 +284,15 @@ BOOL WinMTRDialog::InitRegistry()
 		if(!hasIntervalFromCmdLine) interval = (float)tmp_dword / 1000.0;
 	}
 
+	if(RegQueryValueEx(hKey_v, "PacketsPerTest", 0, NULL, (unsigned char *)&tmp_dword, &value_size) != ERROR_SUCCESS) {
+		tmp_dword = packetsPerTest;
+		RegSetValueEx(hKey_v,"PacketsPerTest", 0, REG_DWORD, (const unsigned char *)&tmp_dword, sizeof(DWORD));
+	} else {
+		packetsPerTest = (int)tmp_dword;
+	}
+
 	r = RegCreateKeyEx(	hKey, 
-					"LRU", 
+					"LRU",
 					0, 
 					NULL,
 					REG_OPTION_NON_VOLATILE,
@@ -607,6 +615,7 @@ void WinMTRDialog::OnOptions()
 	optDlg.SetInterval(interval);
 	optDlg.SetMaxLRU(maxLRU);
 	optDlg.SetUseDNS(useDNS);
+	optDlg.SetPacketsPerTest(packetsPerTest);
 
 	if(IDOK == optDlg.DoModal()) {
 
@@ -614,6 +623,7 @@ void WinMTRDialog::OnOptions()
 		interval = optDlg.GetInterval();
 		maxLRU = optDlg.GetMaxLRU();
 		useDNS = optDlg.GetUseDNS();
+		packetsPerTest = optDlg.GetPacketsPerTest();
 
 		HKEY hKey;
 		DWORD tmp_dword;
@@ -629,9 +639,11 @@ void WinMTRDialog::OnOptions()
 		RegSetValueEx(hKey,"MaxLRU", 0, REG_DWORD, (const unsigned char *)&tmp_dword, sizeof(DWORD));
 		tmp_dword = useDNS ? 1 : 0;
 		RegSetValueEx(hKey,"UseDNS", 0, REG_DWORD, (const unsigned char *)&tmp_dword, sizeof(DWORD));
-		tmp_dword = (DWORD)(interval * 1000);
-		RegSetValueEx(hKey,"Interval", 0, REG_DWORD, (const unsigned char *)&tmp_dword, sizeof(DWORD));
-		RegCloseKey(hKey);
+	tmp_dword = (DWORD)(interval * 1000);
+	RegSetValueEx(hKey,"Interval", 0, REG_DWORD, (const unsigned char *)&tmp_dword, sizeof(DWORD));
+	tmp_dword = packetsPerTest;
+	RegSetValueEx(hKey,"PacketsPerTest", 0, REG_DWORD, (const unsigned char *)&tmp_dword, sizeof(DWORD));
+	RegCloseKey(hKey);
 		if(maxLRU<nrLRU) {
 			r = RegOpenKeyEx(	HKEY_CURRENT_USER, "Software", 0, KEY_ALL_ACCESS,&hKey);
 			r = RegOpenKeyEx(	hKey, "WinMTR", 0, KEY_ALL_ACCESS, &hKey);
@@ -1220,10 +1232,6 @@ void WinMTRDialog::OnTimer(UINT_PTR nIDEvent)
             Transit(STOPPING);
             trace_count = 0;
         }
-    }
-    if (trace_count > 5) {
-        Transit(STOPPING);
-        trace_count = 0;
     }
 	CDialog::OnTimer(nIDEvent);
 }
