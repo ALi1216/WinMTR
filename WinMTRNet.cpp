@@ -8,16 +8,12 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <wininet.h>
 
 #include "stdio.h"
 #include "string.h"
 
-#include "czdb_bridge.h"
 
-// 纯真社区版 CZDB 库配置
-#define CZDB_DB_FILENAME "cz88_public_v4.czdb"
-// 默认密钥（同目录 czdb.key 优先；此处仅作兜底）
-#define DEFAULT_CZDB_KEY "HziL4SVpdbboh4rfgjRwiA=="
 
 
 #define TRACE_MSG(msg)										\
@@ -50,7 +46,6 @@ WinMTRNet::WinMTRNet(WinMTRDialog *wp) {
 	tracing=false;
 	initialized = false;
 	wmtrdlg = wp;
-	m_czdb = NULL;   // 防御：构造提前返回时也要保证为 NULL，避免 DnsResolverThread/析构误用野指针
 	WSADATA wsaData;
 
     if( WSAStartup(MAKEWORD(2, 2), &wsaData) ) {
@@ -86,8 +81,6 @@ WinMTRNet::WinMTRNet(WinMTRDialog *wp) {
 
 	ResetHops();
 
-	InitCzdb();
-
 	initialized = true;
 	return;
 }
@@ -104,8 +97,6 @@ WinMTRNet::~WinMTRNet()
 		FreeLibrary(hICMP_DLL);
 
 		WSACleanup();
-
-		CloseCzdb();
 
 		CloseHandle(ghMutex);
 	}
@@ -449,101 +440,98 @@ void WinMTRNet::AddXmit(int at)
 }
 
 
-// ---------- 纯真社区版 CZDB 辅助函数 ----------
+// ---------- 实时在线归属识别（ipshudi.com）----------
 
-// 把 CZDB 返回的 UTF-8 归属串中的 en dash(U+2013, "–") 与 "\t" 规整成 ASCII '-' / ' '，
-// 便于后续转本地代码页（中文 Windows 的 GBK 不含 en dash）。
-static void CzdbNormalize(const char* utf8, char* out, int outLen)
+// 从 HTML 中提取 <td class="th">LABEL</td> 行后 <td> 内 <span> 的文本
+static bool ExtractField(const char* html, const char* label, char* out, int outLen)
 {
-    int j = 0;
-    for (int i = 0; utf8[i] != '\0' && j < outLen - 1; ) {
-        unsigned char c = (unsigned char)utf8[i];
-        if (c == 0xE2 && (unsigned char)utf8[i+1] == 0x80 && (unsigned char)utf8[i+2] == 0x93) {
-            out[j++] = '-'; i += 3;
-        } else if (utf8[i] == '\t') {
-            out[j++] = ' '; i += 1;
-        } else {
-            out[j++] = utf8[i++];
+    out[0] = 0;
+    char pat[64];
+    sprintf(pat, "<td class=\"th\">%s</td>", label);
+    const char* p = strstr(html, pat);
+    if (!p) return false;
+    const char* td = strstr(p + strlen(pat), "<td");
+    if (!td) return false;
+    const char* vs = strchr(td, '>');
+    if (!vs) return false;
+    vs++;
+    const char* end = strstr(vs, "</td>");
+    if (!end) return false;
+    // 优先取 <span>...</span>
+    const char* span = strstr(vs, "<span>");
+    const char* start = vs;
+    if (span && span < end) {
+        start = span + 6;
+        const char* se = strstr(start, "</span>");
+        if (se && se < end) end = se;
+    }
+    int n = 0; bool intag = false;
+    for (const char* q = start; q < end && n < outLen - 1; q++) {
+        if (*q == '<') intag = true;
+        else if (*q == '>') intag = false;
+        else if (!intag) out[n++] = *q;
+    }
+    out[n] = 0;
+    while (n > 0 && (out[n-1]==' '||out[n-1]=='\n'||out[n-1]=='\r'||out[n-1]=='\t')) out[--n]=0;
+    return n > 0;
+}
+
+// 通过 https://www.ipshudi.com/<ip>.htm 实时查询归属地/运营商/IP类型，组合后写入 outAttr（本地 ANSI）
+bool WinMTRNet::LookupAttribution(const char* ip, char* outAttr, int outLen)
+{
+    outAttr[0] = 0;
+    if (!ip || !*ip) return false;
+
+    char url[256];
+    sprintf(url, "https://www.ipshudi.com/%s.htm", ip);
+
+    char* html = NULL; bool ok = false;
+    HINTERNET hOpen = InternetOpenA("WinMTR/0.95", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
+    if (hOpen) {
+        DWORD timeout = 5000;
+        InternetSetOptionA(hOpen, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
+        InternetSetOptionA(hOpen, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
+        HINTERNET hUrl = InternetOpenUrlA(hOpen, url, NULL, 0,
+            INTERNET_FLAG_RELOAD | INTERNET_FLAG_SECURE | INTERNET_FLAG_NO_UI, 0);
+        if (hUrl) {
+            const DWORD cap = 65536;
+            html = new char[cap + 1];
+            if (html) {
+                DWORD total = 0; char chunk[8192]; DWORD read;
+                while (total < cap && InternetReadFile(hUrl, chunk, sizeof(chunk), &read) && read > 0) {
+                    memcpy(html + total, chunk, read); total += read;
+                }
+                html[total] = 0;
+                ok = (total > 0);
+            }
+            InternetCloseHandle(hUrl);
         }
+        InternetCloseHandle(hOpen);
     }
-    out[j] = '\0';
-}
+    if (!ok || !html) { delete[] html; return false; }
 
-// UTF-8 -> 本地 ANSI 代码页（中文 Windows 为 GBK），供 WinMTR 的 MultiByte 列表控件显示
-static void CzdbUtf8ToLocal(const char* utf8, char* out, int outLen)
-{
-    if (outLen <= 1) { if (outLen == 1) out[0] = '\0'; return; }
-    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
-    if (wlen <= 0) { out[0] = '\0'; return; }
-    wchar_t* w = new wchar_t[wlen];
-    MultiByteToWideChar(CP_UTF8, 0, utf8, -1, w, wlen);
-    WideCharToMultiByte(CP_ACP, 0, w, -1, out, outLen, "?", NULL);
-    delete[] w;
-}
+    char region[128] = {0}, isp[128] = {0}, iptype[128] = {0};
+    ExtractField(html, "归属地", region, sizeof(region));
+    ExtractField(html, "运营商", isp, sizeof(isp));
+    ExtractField(html, "iP类型", iptype, sizeof(iptype));
+    delete[] html;
 
-// 取得当前 exe 所在目录（带结尾反斜杠）
-static void CzdbGetExeDir(char* out, int outLen)
-{
-    char path[MAX_PATH] = {0};
-    GetModuleFileNameA(NULL, path, MAX_PATH);
-    char* slash = strrchr(path, '\\');
-    if (slash) *(slash + 1) = '\0';
-    strncpy(out, path, outLen - 1);
-    out[outLen - 1] = '\0';
-}
+    std::string combined;
+    if (region[0]) combined += region;
+    if (isp[0])    { if (!combined.empty()) combined += " "; combined += isp; }
+    if (iptype[0]) { if (!combined.empty()) combined += " "; combined += iptype; }
+    if (combined.empty()) return false;
 
-// 读取同目录下的 czdb.key（纯文本密钥）；不存在或为空则用编译期默认密钥
-static void CzdbLoadKey(char* out, int outLen)
-{
-    char dir[MAX_PATH] = {0};
-    CzdbGetExeDir(dir, MAX_PATH);
-    char keyfile[MAX_PATH] = {0};
-    strncat(keyfile, dir, MAX_PATH - 1);
-    strncat(keyfile, "czdb.key", MAX_PATH - 1 - strlen(keyfile));
-
-    FILE* fp = fopen(keyfile, "rb");
-    if (fp) {
-        int n = (int)fread(out, 1, outLen - 1, fp);
-        fclose(fp);
-        while (n > 0 && (out[n-1] == '\n' || out[n-1] == '\r' || out[n-1] == ' ')) out[--n] = '\0';
-        if (n > 0) return;
+    // UTF-8 -> 本地 ANSI（中文 Windows 下为 GBK），供列表控件显示
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, combined.c_str(), -1, NULL, 0);
+    if (wlen > 0) {
+        wchar_t* w = new wchar_t[wlen];
+        MultiByteToWideChar(CP_UTF8, 0, combined.c_str(), -1, w, wlen);
+        WideCharToMultiByte(CP_ACP, 0, w, -1, outAttr, outLen, "?", NULL);
+        delete[] w;
+        return outAttr[0] != 0;
     }
-    strncpy(out, DEFAULT_CZDB_KEY, outLen - 1);
-    out[outLen - 1] = '\0';
-}
-
-void WinMTRNet::InitCzdb()
-{
-    m_czdb = NULL;
-    char dir[MAX_PATH] = {0};
-    CzdbGetExeDir(dir, MAX_PATH);
-    char dbpath[MAX_PATH] = {0};
-    strncat(dbpath, dir, MAX_PATH - 1);
-    strncat(dbpath, CZDB_DB_FILENAME, MAX_PATH - 1 - strlen(dbpath));
-
-    char key[256] = {0};
-    CzdbLoadKey(key, sizeof(key));
-
-    FILE* test = fopen(dbpath, "rb");
-    if (!test) {
-        TRACE_MSG("CZDB file not found: " << dbpath);
-        return;
-    }
-    fclose(test);
-
-    // 必须用 MEMORY 模式：线程安全（WinMTR 每跳启动一个 DnsResolverThread）
-    m_czdb = initDBSearcher(dbpath, key, CZDB_MEMORY);
-    if (!m_czdb) {
-        TRACE_MSG("initDBSearcher failed (wrong key or corrupt db)");
-    }
-}
-
-void WinMTRNet::CloseCzdb()
-{
-    if (m_czdb) {
-        closeDBSearcher(m_czdb);
-        m_czdb = NULL;
-    }
+    return false;
 }
 
 void DnsResolverThread(void *p)
@@ -556,25 +544,11 @@ void DnsResolverThread(void *p)
     int addr = wn->GetAddr(dnt->index);
     sprintf(buf, "%d.%d.%d.%d", (addr >> 24) & 0xff, (addr >> 16) & 0xff, (addr >> 8) & 0xff, addr & 0xff);
 
-    if (wn->GetCzdb() != NULL) {
-        char regionUtf8[512] = {0};
-        if (search(buf, wn->GetCzdb(), regionUtf8, (int)sizeof(regionUtf8)) == 0 && regionUtf8[0] != '\0') {
-            char norm[512] = {0};
-            CzdbNormalize(regionUtf8, norm, (int)sizeof(norm));
-            char local[512] = {0};
-            CzdbUtf8ToLocal(norm, local, (int)sizeof(local));
-            std::string h = std::string(buf) + " " + std::string(local);
-            char *writable = new char[h.size() + 1];
-            std::copy(h.begin(), h.end(), writable);
-            writable[h.size()] = '\0';
-            wn->SetName(dnt->index, writable);
-            delete[] writable;
-        } else {
-            // search 异常：退回只显示 IP
-            wn->SetName(dnt->index, buf);
-        }
+    char attr[256] = {0};
+    if (WinMTRNet::LookupAttribution(buf, attr, (int)sizeof(attr)) && attr[0] != '\0') {
+        wn->SetName(dnt->index, attr);
     } else {
-        // CZDB 未初始化（DLL/库文件缺失）：退回只显示 IP
+        // 在线查询失败：退回只显示 IP
         wn->SetName(dnt->index, buf);
     }
 
