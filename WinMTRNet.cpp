@@ -476,6 +476,25 @@ static bool ExtractField(const char* html, const char* label, char* out, int out
     return n > 0;
 }
 
+// 判断是否为内网/保留地址（非公网），用于跳过无意义的在线归属查询
+static bool IsPrivateOrReservedIP(unsigned long addr)
+{
+    unsigned char o1 = (unsigned char)((addr >> 24) & 0xff);
+    unsigned char o2 = (unsigned char)((addr >> 16) & 0xff);
+    unsigned char o3 = (unsigned char)((addr >> 8)  & 0xff);
+    unsigned char o4 = (unsigned char)( addr        & 0xff);
+    if (o1 == 0)   return true;                                   // 0.0.0.0/8
+    if (o1 == 127) return true;                                   // loopback 127.0.0.0/8
+    if (o1 == 10)  return true;                                   // RFC1918 10.0.0.0/8
+    if (o1 == 172 && o2 >= 16 && o2 <= 31) return true;          // RFC1918 172.16.0.0/12
+    if (o1 == 192 && o2 == 168) return true;                     // RFC1918 192.168.0.0/16
+    if (o1 == 169 && o2 == 254) return true;                     // link-local 169.254.0.0/16
+    if (o1 == 100 && o2 >= 64 && o2 <= 127) return true;         // CGNAT 100.64.0.0/10
+    if (o1 == 255 && o2 == 255 && o3 == 255 && o4 == 255) return true; // 受限广播
+    if (o1 >= 224) return true;                                   // 组播 224/4 与保留 240/4
+    return false;
+}
+
 // 通过 https://www.ipshudi.com/<ip>.htm 实时查询归属地/运营商/IP类型，组合后写入 outAttr（本地 ANSI）
 bool WinMTRNet::LookupAttribution(const char* ip, char* outAttr, int outLen)
 {
@@ -544,12 +563,20 @@ void DnsResolverThread(void *p)
     int addr = wn->GetAddr(dnt->index);
     sprintf(buf, "%d.%d.%d.%d", (addr >> 24) & 0xff, (addr >> 16) & 0xff, (addr >> 8) & 0xff, addr & 0xff);
 
-    char attr[256] = {0};
-    if (WinMTRNet::LookupAttribution(buf, attr, (int)sizeof(attr)) && attr[0] != '\0') {
-        wn->SetName(dnt->index, attr);
+    // 仅对公网 IP 发起在线归属查询；内网/保留地址直接标注，避免无效联网
+    if (IsPrivateOrReservedIP((unsigned long)addr)) {
+        wchar_t labelW[] = L"局域网IP（Private-Use）";
+        char labelAnsi[64] = {0};
+        WideCharToMultiByte(CP_ACP, 0, labelW, -1, labelAnsi, (int)sizeof(labelAnsi), "?", NULL);
+        wn->SetName(dnt->index, labelAnsi);
     } else {
-        // 在线查询失败：退回只显示 IP
-        wn->SetName(dnt->index, buf);
+        char attr[256] = {0};
+        if (WinMTRNet::LookupAttribution(buf, attr, (int)sizeof(attr)) && attr[0] != '\0') {
+            wn->SetName(dnt->index, attr);
+        } else {
+            // 在线查询失败：退回只显示 IP
+            wn->SetName(dnt->index, buf);
+        }
     }
 
     delete p;
