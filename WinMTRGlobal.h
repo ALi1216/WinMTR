@@ -46,7 +46,7 @@
 
 #include "resource.h"
 
-#define WINMTR_VERSION	"1.00"
+#define WINMTR_VERSION	"0.94"
 #define WINMTR_LICENSE	"GPL - GNU Public License"
 #define WINMTR_COPYRIGHT "WinMTR 0.9 (c) 2010-2011 Appnor MSP - Fully Managed Hosting & Cloud Provider www.appnor.com"
 #define WINMTR_HOMEPAGE	"http://WinMTR.sourceforge.net"
