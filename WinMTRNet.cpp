@@ -12,6 +12,7 @@
 
 #include "stdio.h"
 #include "string.h"
+#include "czdb_reader.h"
 
 
 
@@ -565,6 +566,70 @@ bool WinMTRNet::LookupAttribution(const char* ip, char* outAttr, int outLen)
     return false;
 }
 
+// ---------- 离线归属回退（纯真 CZDB）----------
+// 当在线查询（ipshudi）因限流/无法访问而拿不到归属时，回退到本地纯真数据库
+// cz88_public_v4.czdb。数据库以「内存模式」整体读入，仅做只读查询，多线程安全。
+static void* g_czdbHandle = NULL;     // 已打开的句柄（一次性，之后只读）
+static bool  g_czdbTried  = false;    // 是否已尝试打开（避免每次查询失败都重读文件）
+static HANDLE g_czdbInitMutex = NULL;
+static const char* CZDB_KEY = "HziL4SVpdbboh4rfgjRwiA==";
+
+// 懒加载：exe 同目录优先，回退到桌面；仅打开一次
+static bool EnsureCzdbOpened()
+{
+    if (g_czdbHandle != NULL) return true;
+    if (g_czdbTried) return false;
+    if (!g_czdbInitMutex)
+        g_czdbInitMutex = CreateMutexA(NULL, FALSE, "Local\\WinMTR_CzdbInit");
+    if (!g_czdbInitMutex) return false;
+    if (WaitForSingleObject(g_czdbInitMutex, 5000) != WAIT_OBJECT_0) return false;
+
+    bool ret = false;
+    if (g_czdbHandle == NULL && !g_czdbTried) {
+        g_czdbTried = true;   // 标记已尝试：无论成败都不再重试，防止线程残留/反复读盘
+        char path[MAX_PATH] = {0};
+        DWORD n = GetModuleFileNameA(NULL, path, MAX_PATH);
+        if (n > 0) {
+            char* slash = strrchr(path, '\\');
+            if (slash) strcpy(slash + 1, "cz88_public_v4.czdb");
+        }
+        void* h = NULL;
+        if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES)
+            h = czdb_open(path, CZDB_KEY);
+        if (!h) {
+            // 回退：桌面（用户本机常驻位置）
+            strcpy(path, "C:\\Users\\12788\\Desktop\\cz88_public_v4.czdb");
+            if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES)
+                h = czdb_open(path, CZDB_KEY);
+        }
+        g_czdbHandle = h;
+        ret = (h != NULL);
+    } else {
+        ret = (g_czdbHandle != NULL);
+    }
+    ReleaseMutex(g_czdbInitMutex);
+    return ret;
+}
+
+// 离线归属查询：UTF-8 -> 本地 ANSI(GBK) 供列表控件显示
+static bool CzdbLookup(const char* ip, char* outAttr, int outLen)
+{
+    outAttr[0] = 0;
+    if (!EnsureCzdbOpened() || !g_czdbHandle) return false;
+    char utf8[512] = {0};
+    if (czdb_search(g_czdbHandle, ip, utf8, (int)sizeof(utf8)) != 0) return false;
+    if (utf8[0] == 0) return false;
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
+    if (wlen > 0) {
+        wchar_t* w = new wchar_t[wlen];
+        MultiByteToWideChar(CP_UTF8, 0, utf8, -1, w, wlen);
+        WideCharToMultiByte(CP_ACP, 0, w, -1, outAttr, outLen, "?", NULL);
+        delete[] w;
+        return outAttr[0] != 0;
+    }
+    return false;
+}
+
 void DnsResolverThread(void *p)
 {
     TRACE_MSG("DNS resolver thread started.");
@@ -604,8 +669,16 @@ void DnsResolverThread(void *p)
             snprintf(combined, sizeof(combined), "%s %s", buf, attr);
             wn->SetName(dnt->index, combined);
         } else {
-            // 多次重试仍失败：退回只显示 IP
-            wn->SetName(dnt->index, buf);
+            // 在线查询（含退避重试）仍失败：回退纯真 CZDB 离线库补全归属
+            char czattr[512] = {0};
+            if (CzdbLookup(buf, czattr, (int)sizeof(czattr)) && czattr[0] != '\0') {
+                char combined[255];
+                snprintf(combined, sizeof(combined), "%s %s", buf, czattr);
+                wn->SetName(dnt->index, combined);
+            } else {
+                // 离线库也未命中：退回只显示 IP
+                wn->SetName(dnt->index, buf);
+            }
         }
     }
 
