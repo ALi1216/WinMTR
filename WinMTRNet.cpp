@@ -565,14 +565,19 @@ void DnsResolverThread(void *p)
 
     // 仅对公网 IP 发起在线归属查询；内网/保留地址直接标注，避免无效联网
     if (IsPrivateOrReservedIP((unsigned long)addr)) {
-        wchar_t labelW[] = L"局域网IP（Private-Use）";
+        // 用 \u 转义书写中文，源码编码差异（CI 为 en-US 代码页）不再导致乱码
+        // L"局域网IP（Private-Use）"
+        wchar_t labelW[] = L"\u5C40\u57DF\u7F51IP\uFF08Private-Use\uFF09";
         char labelAnsi[64] = {0};
         WideCharToMultiByte(CP_ACP, 0, labelW, -1, labelAnsi, (int)sizeof(labelAnsi), "?", NULL);
         wn->SetName(dnt->index, labelAnsi);
     } else {
-        char attr[256] = {0};
+        char attr[200] = {0};
         if (WinMTRNet::LookupAttribution(buf, attr, (int)sizeof(attr)) && attr[0] != '\0') {
-            wn->SetName(dnt->index, attr);
+            // 归属信息前加上所查 IP，便于对应行
+            char combined[255];
+            snprintf(combined, sizeof(combined), "%s %s", buf, attr);
+            wn->SetName(dnt->index, combined);
         } else {
             // 在线查询失败：退回只显示 IP
             wn->SetName(dnt->index, buf);
