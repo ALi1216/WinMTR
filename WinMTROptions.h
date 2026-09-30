@@ -30,16 +30,19 @@ public:
 	void SetInterval(double i)		{ interval = i;   };
 	void SetPingSize(int ps)		{ pingsize = ps;  };
 	void SetMaxLRU(int mlru)		{ maxLRU = mlru;  };
+	void SetPacketsPerTest(int ppt)	{ packetsPerTest = ppt; };
 
 	double GetInterval()			{ return interval;   };
 	int GetPingSize()				{ return pingsize;   };
 	int GetMaxLRU()					{ return maxLRU;   };
+	int GetPacketsPerTest()			{ return packetsPerTest; };
 	BOOL GetUseDNS()				{ return useDNS;     };
 
 	enum { IDD = IDD_DIALOG_OPTIONS };
 	CEdit	m_editSize;
 	CEdit	m_editInterval;
 	CEdit	m_editMaxLRU;
+	CEdit	m_editPackets;
 	CButton	m_checkDNS;
 
 protected:
@@ -56,6 +59,7 @@ private:
 	double   interval;
 	int      pingsize;
 	int		 maxLRU;
+	int		 packetsPerTest;
 	BOOL     useDNS;
 };
 
