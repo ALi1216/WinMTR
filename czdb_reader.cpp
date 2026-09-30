@@ -41,6 +41,7 @@ struct CzdbHandle {
     int             ipType;
     int             ipBytesLength;
     int             indexLength;
+    int             endIndexPtr;   // super-header @13: offset (from dbBin start) to end-index region
     int             headerLength;
     unsigned char** headerSip;   // pointers into fileBuf (NOT owned)
     int*            headerPtr;
