@@ -497,7 +497,7 @@ static bool IsPrivateOrReservedIP(unsigned long addr)
 }
 
 // 在线归属查询串行锁：WinINet 默认每主机仅 2 个并发连接，开局多个跳点同时查询时
-// 后排请求会排队直至超时失败，这里串行化以保证每次查询的成功率
+// 在线查询仅单轮、失败即回退纯真库；互斥体保留但不再串行化（各跳点并行发起，降低等待）
 static HANDLE g_attrSerialMutex = NULL;
 
 // 通过 https://www.ipshudi.com/<ip>.htm 实时查询归属地/运营商/IP类型，组合后写入 outAttr（本地 ANSI）
@@ -512,7 +512,7 @@ bool WinMTRNet::LookupAttribution(const char* ip, char* outAttr, int outLen)
     // 命名互斥体：多线程同时首次创建时系统保证指向同一内核对象
     if (!g_attrSerialMutex)
         g_attrSerialMutex = CreateMutexA(NULL, FALSE, "Local\\WinMTR_AttrQuery");
-    bool locked = (g_attrSerialMutex != NULL) && WaitForSingleObject(g_attrSerialMutex, 15000) == WAIT_OBJECT_0;
+    bool locked = false; // 单轮查询+立即回退：不再串行化在线查询，各跳点并行发起、失败即落纯真库
 
     char* html = NULL; bool ok = false;
     HINTERNET hOpen = InternetOpenA("WinMTR/0.95", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
@@ -668,23 +668,14 @@ void DnsResolverThread(void *p)
         wn->SetName(dnt->index, combined);
     } else {
         char attr[200] = {0};
-        bool got = false;
-        // 开局多个跳点并发查询易被 WinINet 并发上限/站点限流挤掉，单次失败会导致该跳点
-        // 永远只显示裸 IP。这里带退避重试（最多 5 次，2/4/6/8s），保证后探测出的地址也能补上归属
-        for (int attempt = 0; attempt < 5 && !got; attempt++) {
-            if (attempt > 0) {
-                if (!wn->tracing) break;   // 已停止追踪则不再重试，避免线程残留
-                Sleep(2000 * attempt);
-            }
-            if (WinMTRNet::LookupAttribution(buf, attr, (int)sizeof(attr)) && attr[0] != '\0') got = true;
-        }
-        if (got) {
+        // 每个公网地址仅发起一遍在线查询；未查到归属立即回退纯真 CZDB，不再退避重试（避免长等待）
+        if (WinMTRNet::LookupAttribution(buf, attr, (int)sizeof(attr)) && attr[0] != '\0') {
             // 归属信息前加上所查 IP，便于对应行
             char combined[255];
             snprintf(combined, sizeof(combined), "%s %s", buf, attr);
             wn->SetName(dnt->index, combined);
         } else {
-            // 在线查询（含退避重试）仍失败：回退纯真 CZDB 离线库补全归属
+            // 在线查询未命中：立即回退纯真 CZDB 离线库补全归属
             char czattr[512] = {0};
             if (CzdbLookup(buf, czattr, (int)sizeof(czattr)) && czattr[0] != '\0') {
                 char combined[255];
