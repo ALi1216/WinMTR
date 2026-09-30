@@ -568,13 +568,13 @@ bool WinMTRNet::LookupAttribution(const char* ip, char* outAttr, int outLen)
 
 // ---------- 离线归属回退（纯真 CZDB）----------
 // 当在线查询（ipshudi）因限流/无法访问而拿不到归属时，回退到本地纯真数据库
-// cz88_public_v4.czdb。数据库以「内存模式」整体读入，仅做只读查询，多线程安全。
+// cz88_public_v4.czdb（与 WinMTR.exe 同目录）。数据库以「内存模式」整体读入，仅做只读查询，多线程安全。
+// 解密密钥从同目录 czdb.key 读取（该文件已 gitignore，不入库、不发布）；缺密钥则跳过离线回退。
 static void* g_czdbHandle = NULL;     // 已打开的句柄（一次性，之后只读）
 static bool  g_czdbTried  = false;    // 是否已尝试打开（避免每次查询失败都重读文件）
 static HANDLE g_czdbInitMutex = NULL;
-static const char* CZDB_KEY = "HziL4SVpdbboh4rfgjRwiA==";
 
-// 懒加载：exe 同目录优先，回退到桌面；仅打开一次
+// 懒加载：密钥与数据库均从 exe 同目录读取；仅打开一次
 static bool EnsureCzdbOpened()
 {
     if (g_czdbHandle != NULL) return true;
@@ -587,23 +587,38 @@ static bool EnsureCzdbOpened()
     bool ret = false;
     if (g_czdbHandle == NULL && !g_czdbTried) {
         g_czdbTried = true;   // 标记已尝试：无论成败都不再重试，防止线程残留/反复读盘
-        char path[MAX_PATH] = {0};
-        DWORD n = GetModuleFileNameA(NULL, path, MAX_PATH);
+        char dir[MAX_PATH] = {0};
+        DWORD n = GetModuleFileNameA(NULL, dir, MAX_PATH);
         if (n > 0) {
-            char* slash = strrchr(path, '\\');
-            if (slash) strcpy(slash + 1, "cz88_public_v4.czdb");
+            char* slash = strrchr(dir, '\\');
+            if (slash) *(slash + 1) = '\0';   // 仅保留目录（含结尾反斜杠）
         }
-        void* h = NULL;
-        if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES)
-            h = czdb_open(path, CZDB_KEY);
-        if (!h) {
-            // 回退：桌面（用户本机常驻位置）
-            strcpy(path, "C:\\Users\\12788\\Desktop\\cz88_public_v4.czdb");
-            if (GetFileAttributesA(path) != INVALID_FILE_ATTRIBUTES)
-                h = czdb_open(path, CZDB_KEY);
+        // 1) 解密密钥 czdb.key（同目录；该文件已 gitignore，不发布）
+        char keyPath[MAX_PATH];
+        strcpy(keyPath, dir); strcat(keyPath, "czdb.key");
+        char keyBuf[64] = {0};
+        if (GetFileAttributesA(keyPath) != INVALID_FILE_ATTRIBUTES) {
+            FILE* kf = fopen(keyPath, "rb");
+            if (kf) {
+                size_t rd = fread(keyBuf, 1, sizeof(keyBuf) - 1, kf);
+                while (rd > 0 && (keyBuf[rd - 1] == '\n' || keyBuf[rd - 1] == '\r' || keyBuf[rd - 1] == ' '))
+                    keyBuf[--rd] = '\0';
+                fclose(kf);
+            }
         }
-        g_czdbHandle = h;
-        ret = (h != NULL);
+        if (keyBuf[0] == '\0') {
+            g_czdbHandle = NULL;   // 无密钥：跳过离线回退，仅走在线查询
+            ret = false;
+        } else {
+            // 2) 数据库 cz88_public_v4.czdb（同目录）
+            char dbPath[MAX_PATH];
+            strcpy(dbPath, dir); strcat(dbPath, "cz88_public_v4.czdb");
+            void* h = NULL;
+            if (GetFileAttributesA(dbPath) != INVALID_FILE_ATTRIBUTES)
+                h = czdb_open(dbPath, keyBuf);
+            g_czdbHandle = h;
+            ret = (h != NULL);
+        }
     } else {
         ret = (g_czdbHandle != NULL);
     }
