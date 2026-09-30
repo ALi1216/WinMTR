@@ -122,15 +122,11 @@
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <SubSystem>Windows</SubSystem>
       <OutputFile>.\Release_x32\WinMTR.exe</OutputFile>
-      <AdditionalDependencies>db_searcher.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wininet.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <UACExecutionLevel>AsInvoker</UACExecutionLevel>
       <EnableUAC>false</EnableUAC>
       <UACUIAccess>true</UACUIAccess>
-          <AdditionalLibraryDirectories>$(ProjectDir)czdb_lib</AdditionalLibraryDirectories>
-      </Link>
-      <PostBuildEvent>
-      <Command>xcopy /Y /D "$(ProjectDir)czdb_lib\*.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 || exit /b 0</Command>
-    </PostBuildEvent>
+    </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -165,15 +161,11 @@
       <SuppressStartupBanner>true</SuppressStartupBanner>
       <SubSystem>Windows</SubSystem>
       <OutputFile>.\Release_x64\WinMTR.exe</OutputFile>
-      <AdditionalDependencies>db_searcher.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wininet.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <UACExecutionLevel>AsInvoker</UACExecutionLevel>
       <EnableUAC>false</EnableUAC>
       <UACUIAccess>true</UACUIAccess>
-          <AdditionalLibraryDirectories>$(ProjectDir)czdb_lib</AdditionalLibraryDirectories>
-      </Link>
-      <PostBuildEvent>
-      <Command>xcopy /Y /D "$(ProjectDir)czdb_lib\*.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 || exit /b 0</Command>
-    </PostBuildEvent>
+    </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -212,15 +204,11 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
       <OutputFile>.\Debug_x32\WinMTR.exe</OutputFile>
-      <AdditionalDependencies>db_searcher.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wininet.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <UACExecutionLevel>AsInvoker</UACExecutionLevel>
       <EnableUAC>false</EnableUAC>
       <UACUIAccess>true</UACUIAccess>
-          <AdditionalLibraryDirectories>$(ProjectDir)czdb_lib</AdditionalLibraryDirectories>
-      </Link>
-      <PostBuildEvent>
-      <Command>xcopy /Y /D "$(ProjectDir)czdb_lib\*.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 || exit /b 0</Command>
-    </PostBuildEvent>
+    </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
@@ -257,15 +245,11 @@
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
       <OutputFile>.\Debug_x64\WinMTR.exe</OutputFile>
-      <AdditionalDependencies>db_searcher.lib;nafxcwd.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>wininet.lib;nafxcwd.lib;odbc32.lib;odbccp32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <UACExecutionLevel>AsInvoker</UACExecutionLevel>
       <EnableUAC>false</EnableUAC>
       <UACUIAccess>true</UACUIAccess>
-          <AdditionalLibraryDirectories>$(ProjectDir)czdb_lib</AdditionalLibraryDirectories>
-      </Link>
-      <PostBuildEvent>
-      <Command>xcopy /Y /D "$(ProjectDir)czdb_lib\*.dll" "$(OutDir)" &gt;nul 2&gt;&amp;1 || exit /b 0</Command>
-    </PostBuildEvent>
+    </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ResourceCompile Include="WinMTR.rc" />
