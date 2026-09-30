@@ -13,7 +13,6 @@
 #ifndef WINMTRNET_H_
 #define WINMTRNET_H_
 
-#include "czdb_bridge.h"
 
 class WinMTRDialog;
 
@@ -76,6 +75,9 @@ public:
 	void	AddReturned(int at);
 	void	AddXmit(int at);
 
+	// 实时在线归属识别：通过 ipshudi.com 获取 归属地/运营商/IP类型
+	static bool LookupAttribution(const char* ip, char* outAttr, int outLen);
+
 	WinMTRDialog		*wmtrdlg;
 	__int32				last_remote_addr;
 	bool				tracing;
@@ -84,17 +86,13 @@ public:
 	LPFNICMPCREATEFILE	lpfnIcmpCreateFile;
 	LPFNICMPCLOSEHANDLE lpfnIcmpCloseHandle;
 	LPFNICMPSENDECHO	lpfnIcmpSendEcho;
-	DBSearcher* GetCzdb() const { return m_czdb; }
 
 private:
 	HINSTANCE			hICMP_DLL;
-    DBSearcher*         m_czdb;          // 纯真社区版 CZDB 解析器（MEMORY 模式，线程安全）
 
     struct s_nethost	host[MaxHost];
 	HANDLE				ghMutex;
 
-    void                InitCzdb();       // 初始化 CZDB（构造时调用）
-    void                CloseCzdb();      // 释放 CZDB（析构时调用）
 };
 
 #endif	// ifndef WINMTRNET_H_
