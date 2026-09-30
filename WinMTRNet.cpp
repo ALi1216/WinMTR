@@ -495,6 +495,10 @@ static bool IsPrivateOrReservedIP(unsigned long addr)
     return false;
 }
 
+// 在线归属查询串行锁：WinINet 默认每主机仅 2 个并发连接，开局多个跳点同时查询时
+// 后排请求会排队直至超时失败，这里串行化以保证每次查询的成功率
+static HANDLE g_attrSerialMutex = NULL;
+
 // 通过 https://www.ipshudi.com/<ip>.htm 实时查询归属地/运营商/IP类型，组合后写入 outAttr（本地 ANSI）
 bool WinMTRNet::LookupAttribution(const char* ip, char* outAttr, int outLen)
 {
@@ -503,6 +507,11 @@ bool WinMTRNet::LookupAttribution(const char* ip, char* outAttr, int outLen)
 
     char url[256];
     sprintf(url, "https://www.ipshudi.com/%s.htm", ip);
+
+    // 命名互斥体：多线程同时首次创建时系统保证指向同一内核对象
+    if (!g_attrSerialMutex)
+        g_attrSerialMutex = CreateMutexA(NULL, FALSE, "Local\\WinMTR_AttrQuery");
+    bool locked = (g_attrSerialMutex != NULL) && WaitForSingleObject(g_attrSerialMutex, 15000) == WAIT_OBJECT_0;
 
     char* html = NULL; bool ok = false;
     HINTERNET hOpen = InternetOpenA("WinMTR/0.95", INTERNET_OPEN_TYPE_PRECONFIG, NULL, NULL, 0);
@@ -527,7 +536,7 @@ bool WinMTRNet::LookupAttribution(const char* ip, char* outAttr, int outLen)
         }
         InternetCloseHandle(hOpen);
     }
-    if (!ok || !html) { delete[] html; return false; }
+    if (!ok || !html) { delete[] html; if (locked) ReleaseMutex(g_attrSerialMutex); return false; }
 
     char region[128] = {0}, isp[128] = {0}, iptype[128] = {0};
     ExtractField(html, "归属地", region, sizeof(region));
@@ -539,7 +548,7 @@ bool WinMTRNet::LookupAttribution(const char* ip, char* outAttr, int outLen)
     if (region[0]) combined += region;
     if (isp[0])    { if (!combined.empty()) combined += " "; combined += isp; }
     if (iptype[0]) { if (!combined.empty()) combined += " "; combined += iptype; }
-    if (combined.empty()) return false;
+    if (combined.empty()) { if (locked) ReleaseMutex(g_attrSerialMutex); return false; }
 
     // UTF-8 -> 本地 ANSI（中文 Windows 下为 GBK），供列表控件显示
     int wlen = MultiByteToWideChar(CP_UTF8, 0, combined.c_str(), -1, NULL, 0);
@@ -548,8 +557,11 @@ bool WinMTRNet::LookupAttribution(const char* ip, char* outAttr, int outLen)
         MultiByteToWideChar(CP_UTF8, 0, combined.c_str(), -1, w, wlen);
         WideCharToMultiByte(CP_ACP, 0, w, -1, outAttr, outLen, "?", NULL);
         delete[] w;
-        return outAttr[0] != 0;
+        bool ret = outAttr[0] != 0;
+        if (locked) ReleaseMutex(g_attrSerialMutex);
+        return ret;
     }
+    if (locked) ReleaseMutex(g_attrSerialMutex);
     return false;
 }
 
@@ -576,13 +588,23 @@ void DnsResolverThread(void *p)
         wn->SetName(dnt->index, combined);
     } else {
         char attr[200] = {0};
-        if (WinMTRNet::LookupAttribution(buf, attr, (int)sizeof(attr)) && attr[0] != '\0') {
+        bool got = false;
+        // 开局多个跳点并发查询易被 WinINet 并发上限/站点限流挤掉，单次失败会导致该跳点
+        // 永远只显示裸 IP。这里带退避重试（最多 5 次，2/4/6/8s），保证后探测出的地址也能补上归属
+        for (int attempt = 0; attempt < 5 && !got; attempt++) {
+            if (attempt > 0) {
+                if (!wn->tracing) break;   // 已停止追踪则不再重试，避免线程残留
+                Sleep(2000 * attempt);
+            }
+            if (WinMTRNet::LookupAttribution(buf, attr, (int)sizeof(attr)) && attr[0] != '\0') got = true;
+        }
+        if (got) {
             // 归属信息前加上所查 IP，便于对应行
             char combined[255];
             snprintf(combined, sizeof(combined), "%s %s", buf, attr);
             wn->SetName(dnt->index, combined);
         } else {
-            // 在线查询失败：退回只显示 IP
+            // 多次重试仍失败：退回只显示 IP
             wn->SetName(dnt->index, buf);
         }
     }
