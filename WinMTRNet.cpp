@@ -442,6 +442,9 @@ void WinMTRNet::AddXmit(int at)
 {
 	WaitForSingleObject(ghMutex, INFINITE);
 	host[at].xmit++;
+	// 按"单次测试包个数"自动停止：>0 时每个跳点发送够即停（等同 mtr -c N）；=0 持续运行直到手动停止
+	if (wmtrdlg->packetsPerTest > 0 && host[at].xmit >= wmtrdlg->packetsPerTest)
+		tracing = false;
 	ReleaseMutex(ghMutex);
 }
 
