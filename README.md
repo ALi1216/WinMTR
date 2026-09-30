@@ -9,6 +9,11 @@
 - **移除本地 IP 库构建依赖**：不再需要 vcpkg / OpenSSL / msgpack / db_searcher.dll，只需系统自带的 `wininet.lib`，编译链大幅简化。
 - 版本号提升为 **v0.95**。
 
+## 相比上版本的更新（v0.96）
+
+- **仅公网 IP 做在线归属查询**：新增内网/保留地址识别（RFC1918、loopback、link-local、CGNAT、组播/保留等），这类跳点不再发起联网查询，直接显示「局域网IP（Private-Use）」；只有公网 IP 才走 ipshudi 实时查询。
+- 版本号提升为 **v0.96**。
+
 ## 用法
 
 1. 从 [Releases](https://github.com/ALi1216/WinMTR/releases) 下载 `WinMTR.exe`；
