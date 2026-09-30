@@ -78,6 +78,7 @@ public:
 	double				interval;
 	bool				hasIntervalFromCmdLine;
 	int					pingsize;
+	int					packetsPerTest;   // 单次测试发送包数，0=持续运行直到手动停止
 	bool				hasPingsizeFromCmdLine;
 	int					maxLRU;
 	bool				hasMaxLRUFromCmdLine;
@@ -91,6 +92,8 @@ public:
 	void SetPingSize(int ps);
 	void SetMaxLRU(int mlru);
 	void SetUseDNS(BOOL udns);
+	void SetPacketsPerTest(int ppt)	{ packetsPerTest = ppt; };
+	int  GetPacketsPerTest()			{ return packetsPerTest; };
 
 protected:
 	virtual void DoDataExchange(CDataExchange* pDX);
