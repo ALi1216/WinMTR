@@ -117,10 +117,12 @@ BOOL WinMTRDialog::OnInitDialog()
 {
 	CDialog::OnInitDialog();
 
+	// 标题栏版本号动态取自 WINMTR_VERSION，避免硬编码漂移
+	char caption[128];
 	#ifndef  _WIN64
-	char caption[] = {"WinMTR v0.93 32 bit by Appnor MSP - www.winmtr.net"};
+	sprintf(caption, "WinMTR v%s 32 bit by Appnor MSP - www.winmtr.net", WINMTR_VERSION);
 	#else
-	char caption[] = {"WinMTR v0.93 64 bit by Appnor MSP - www.winmtr.net"};
+	sprintf(caption, "WinMTR v%s 64 bit by Appnor MSP - www.winmtr.net", WINMTR_VERSION);
 	#endif
 
 	SetTimer(1, WINMTR_DIALOG_TIMER, NULL);
@@ -1088,6 +1090,10 @@ void WinMTRDialog::Transit(STATES new_state)
 				case STOPPING:
 					transition = STOPPING_TO_IDLE;
 				break;
+				case TRACING:
+					// 单次测试包数已发完自动停止：直接从 TRACING 回 IDLE，恢复控件状态
+					transition = TRACING_TO_IDLE;
+				break;
 				case IDLE:
 					transition = IDLE_TO_IDLE;
 				break;
@@ -1163,6 +1169,15 @@ void WinMTRDialog::Transit(STATES new_state)
 			// nothing to be done
 		break;
 		case STOPPING_TO_IDLE:
+			m_buttonStart.EnableWindow(TRUE);
+			statusBar.SetPaneText(0, CString((LPCSTR)IDS_STRING_SB_NAME) );
+			m_buttonStart.SetWindowText("Start");
+			m_comboHost.EnableWindow(TRUE);
+			m_buttonOptions.EnableWindow(TRUE);
+			m_comboHost.SetFocus();
+		break;
+		case TRACING_TO_IDLE:
+			// 自动停止（单次测试包数已发完）：与手动停止后的恢复一致
 			m_buttonStart.EnableWindow(TRUE);
 			statusBar.SetPaneText(0, CString((LPCSTR)IDS_STRING_SB_NAME) );
 			m_buttonStart.SetWindowText("Start");
