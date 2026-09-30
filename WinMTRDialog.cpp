@@ -560,9 +560,9 @@ void WinMTRDialog::OnRestart()
 
 	if(state == IDLE) {
 		m_comboHost.GetWindowText(sHost);
-		sHost.TrimLeft();
-		sHost.TrimLeft();
-      
+		sHost.Trim();   // 自动去除前后空格
+		m_comboHost.SetWindowText(sHost);  // 写回，输入框即时净化
+
 		if(sHost.IsEmpty()) {
 			AfxMessageBox("No host specified!");
 			m_comboHost.SetFocus();
