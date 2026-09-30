@@ -14,6 +14,14 @@
 - **仅公网 IP 做在线归属查询**：新增内网/保留地址识别（RFC1918、loopback、link-local、CGNAT、组播/保留等），这类跳点不再发起联网查询，直接显示「局域网IP（Private-Use）」；只有公网 IP 才走 ipshudi 实时查询。
 - 版本号提升为 **v0.96**。
 
+## 相比上版本的更新（v0.97）
+
+- **修复内网标注乱码**：中文标签改用 `\u` 转义书写，不再受编译机代码页影响，「局域网IP（Private-Use）」显示正常。
+- **归属信息前显示所查 IP**：格式为「IP 归属地 运营商 IP类型」，便于与列表行对应。
+- **修复自动停止后控件状态不复位**：达到「Packets/test」单次测试包数自动停止后，Stop 按钮恢复为 Start、Options 按钮恢复可点击（新增 `TRACING_TO_IDLE` 状态迁移）。
+- **标题栏版本号改为动态取自 `WINMTR_VERSION`**，修复标题栏仍显示 v0.93 的旧硬编码。
+- 版本号提升为 **v0.97**。
+
 ## 用法
 
 1. 从 [Releases](https://github.com/ALi1216/WinMTR/releases) 下载 `WinMTR.exe`；
