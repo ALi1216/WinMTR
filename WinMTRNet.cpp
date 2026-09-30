@@ -570,7 +570,10 @@ void DnsResolverThread(void *p)
         wchar_t labelW[] = L"\u5C40\u57DF\u7F51IP\uFF08Private-Use\uFF09";
         char labelAnsi[64] = {0};
         WideCharToMultiByte(CP_ACP, 0, labelW, -1, labelAnsi, (int)sizeof(labelAnsi), "?", NULL);
-        wn->SetName(dnt->index, labelAnsi);
+        // 局域网跳点同样展示所查 IP，格式对齐公网「IP 归属地 运营商 IP类型」
+        char combined[255];
+        snprintf(combined, sizeof(combined), "%s %s", buf, labelAnsi);
+        wn->SetName(dnt->index, combined);
     } else {
         char attr[200] = {0};
         if (WinMTRNet::LookupAttribution(buf, attr, (int)sizeof(attr)) && attr[0] != '\0') {
