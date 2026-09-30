@@ -55,6 +55,7 @@
 #define DEFAULT_INTERVAL	1.0
 #define DEFAULT_MAX_LRU		128
 #define DEFAULT_DNS			TRUE
+#define DEFAULT_PACKETS_PER_TEST	0   // 单次测试发送包数；0 = 持续运行直到手动停止
 
 #define SAVED_PINGS 100
 #define MaxHost 256
