@@ -55,31 +55,28 @@ struct CzdbHandle {
 // ---- base64 (minimal, no OpenSSL) ----
 static int b64val(char c) {
     if (c >= 'A' && c <= 'Z') return c - 'A';
-    if (c >= 'a' && c <= 'z') return c - 'A' + 52;
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
     if (c >= '0' && c <= '9') return c - '0' + 52;
     if (c == '+') return 62;
     if (c == '/') return 63;
     return -1;
 }
+// Streaming bit-correct decode: '=' terminates payload, whitespace skipped.
+// (Fixes two bugs of the previous version: lowercase letters were mapped with
+//  c-'A'+52 instead of c-'a'+26, and padded tail groups emitted wrong bytes --
+//  the AES key never decoded correctly, so CZDB offline lookup never worked.)
 static int base64Decode(const char* in, int len, unsigned char* out, int outCap) {
-    int o = 0, i = 0;
-    while (i < len) {
-        unsigned int v = 0; int cnt = 0; bool pad = false;
-        while (i < len && cnt < 4) {
-            char c = in[i++];
-            if (c == '=') { pad = true; cnt++; continue; }
-            if (c == '\n' || c == '\r' || c == ' ' || c == '\t') continue;
-            int val = b64val(c);
-            if (val < 0) continue;
-            v = (v << 6) | (unsigned int)val;
-            cnt++;
+    int o = 0; unsigned int v = 0; int bits = 0;
+    for (int i = 0; i < len; i++) {
+        char c = in[i];
+        if (c == '=') break;                       // padding: end of payload
+        int val = b64val(c);
+        if (val < 0) continue;                     // skip CR/LF/space/unknown
+        v = (v << 6) | (unsigned int)val; bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            if (o < outCap) out[o++] = (unsigned char)((v >> bits) & 0xFF);
         }
-        if (cnt == 0) break;
-        int outBytes = cnt - 1;
-        for (int j = 0; j < outBytes; j++) {
-            if (o < outCap) out[o++] = (unsigned char)((v >> (8 * (outBytes - 1 - j))) & 0xFF);
-        }
-        if (cnt < 4) break;
     }
     return o;
 }
