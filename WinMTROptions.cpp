@@ -46,6 +46,7 @@ void WinMTROptions::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_EDIT_SIZE, m_editSize);
 	DDX_Control(pDX, IDC_EDIT_INTERVAL, m_editInterval);
 	DDX_Control(pDX, IDC_EDIT_MAX_LRU, m_editMaxLRU);
+	DDX_Control(pDX, IDC_EDIT_PACKETS, m_editPackets);
 	DDX_Control(pDX, IDC_CHECK_DNS, m_checkDNS);
 }
 
@@ -69,6 +70,9 @@ BOOL WinMTROptions::OnInitDialog()
 	
 	sprintf(strtmp, "%d", maxLRU);
 	m_editMaxLRU.SetWindowText(strtmp);
+
+	sprintf(strtmp, "%d", packetsPerTest);
+	m_editPackets.SetWindowText(strtmp);
 
 	m_checkDNS.SetCheck(useDNS);
 	
@@ -96,6 +100,9 @@ void WinMTROptions::OnOK()
 	
 	m_editMaxLRU.GetWindowText(tmpstr, 20);
 	maxLRU = atoi(tmpstr);
+
+	m_editPackets.GetWindowText(tmpstr, 20);
+	packetsPerTest = atoi(tmpstr);
 
 	CDialog::OnOK();
 }
