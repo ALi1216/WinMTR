@@ -22,6 +22,12 @@
 - **标题栏版本号改为动态取自 `WINMTR_VERSION`**，修复标题栏仍显示 v0.93 的旧硬编码。
 - 版本号提升为 **v0.97**。
 
+## 相比上版本的更新（v0.98）
+
+- **局域网跳点也显示所查 IP**：内网/保留地址跳点的 Hostname 列由仅「局域网IP（Private-Use）」改为「**IP 局域网IP（Private-Use）**」，与公网「IP 归属地 运营商 IP类型」格式对齐，便于区分同一路径中的不同内网跳点。
+- **Host 输入框自动去前后空格**：原 `OnRestart` 仅 `TrimLeft()` 且重复调用（bug），现改为 `Trim()` 去除前后空格，并把裁剪后的值写回输入框，点击 Start 即看到净化结果，避免误输入空格导致解析失败。
+- 版本号提升为 **v0.98**。
+
 ## 用法
 
 1. 从 [Releases](https://github.com/ALi1216/WinMTR/releases) 下载 `WinMTR.exe`；
