@@ -496,8 +496,8 @@ static bool IsPrivateOrReservedIP(unsigned long addr)
     return false;
 }
 
-// 在线归属查询串行锁：WinINet 默认每主机仅 2 个并发连接，开局多个跳点同时查询时
-// 在线查询仅单轮、失败即回退纯真库；互斥体保留但不再串行化（各跳点并行发起，降低等待）
+// 归属查询顺序：纯真 CZDB 本地库优先（即时、完整、离线可用），库未命中才走一遍在线查询兜底。
+// 在线查询不串行化、不重试：各跳点并行发起，单次未命中即落裸 IP（避免长等待）。
 static HANDLE g_attrSerialMutex = NULL;
 
 // 通过 https://www.ipshudi.com/<ip>.htm 实时查询归属地/运营商/IP类型，组合后写入 outAttr（本地 ANSI）
@@ -578,13 +578,14 @@ static HANDLE g_czdbInitMutex = NULL;
 static bool EnsureCzdbOpened()
 {
     if (g_czdbHandle != NULL) return true;
-    if (g_czdbTried) return false;
     if (!g_czdbInitMutex)
         g_czdbInitMutex = CreateMutexA(NULL, FALSE, "Local\\WinMTR_CzdbInit");
     if (!g_czdbInitMutex) return false;
-    if (WaitForSingleObject(g_czdbInitMutex, 5000) != WAIT_OBJECT_0) return false;
+    // 首线程开库期间（读入 31MB 文件需数百毫秒）后续线程必须在此等待。
+    // 旧版在此窗口直接返回 false，导致开库窗口内发起的查询永久丢失归属（部分跳点裸 IP 的根因）。
+    if (WaitForSingleObject(g_czdbInitMutex, 10000) != WAIT_OBJECT_0) return false;
 
-    bool ret = false;
+    bool ret = (g_czdbHandle != NULL);
     if (g_czdbHandle == NULL && !g_czdbTried) {
         g_czdbTried = true;   // 标记已尝试：无论成败都不再重试，防止线程残留/反复读盘
         char dir[MAX_PATH] = {0};
@@ -619,8 +620,6 @@ static bool EnsureCzdbOpened()
             g_czdbHandle = h;
             ret = (h != NULL);
         }
-    } else {
-        ret = (g_czdbHandle != NULL);
     }
     ReleaseMutex(g_czdbInitMutex);
     return ret;
@@ -667,22 +666,20 @@ void DnsResolverThread(void *p)
         snprintf(combined, sizeof(combined), "%s %s", buf, labelAnsi);
         wn->SetName(dnt->index, combined);
     } else {
-        char attr[200] = {0};
-        // 每个公网地址仅发起一遍在线查询；未查到归属立即回退纯真 CZDB，不再退避重试（避免长等待）
-        if (WinMTRNet::LookupAttribution(buf, attr, (int)sizeof(attr)) && attr[0] != '\0') {
-            // 归属信息前加上所查 IP，便于对应行
-            char combined[255];
-            snprintf(combined, sizeof(combined), "%s %s", buf, attr);
+        // 纯真 CZDB 优先：本地内存查询即时返回、记录完整（归属地+运营商）且格式统一；
+        // ipshudi 在线实测间歇不可达且可能只返回部分字段（残缺归属）。库未命中再走一遍在线查询兜底。
+        char czattr[512] = {0};
+        char combined[255];
+        if (CzdbLookup(buf, czattr, (int)sizeof(czattr)) && czattr[0] != '\0') {
+            snprintf(combined, sizeof(combined), "%s %s", buf, czattr);
             wn->SetName(dnt->index, combined);
         } else {
-            // 在线查询未命中：立即回退纯真 CZDB 离线库补全归属
-            char czattr[512] = {0};
-            if (CzdbLookup(buf, czattr, (int)sizeof(czattr)) && czattr[0] != '\0') {
-                char combined[255];
-                snprintf(combined, sizeof(combined), "%s %s", buf, czattr);
+            char attr[200] = {0};
+            if (WinMTRNet::LookupAttribution(buf, attr, (int)sizeof(attr)) && attr[0] != '\0') {
+                snprintf(combined, sizeof(combined), "%s %s", buf, attr);
                 wn->SetName(dnt->index, combined);
             } else {
-                // 离线库也未命中：退回只显示 IP
+                // 离线库与在线查询均未命中：退回只显示 IP
                 wn->SetName(dnt->index, buf);
             }
         }
