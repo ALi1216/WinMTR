@@ -39,7 +39,8 @@
 
 - **新增离线归属回退（纯真 CZDB）**：在线查询（ipshudi）因站点限流/无法访问而拿不到归属时，自动回退到本地纯真数据库 `cz88_public_v4.czdb` 补全归属，彻底消除“裸 IP 定格”问题。
   - **零依赖移植**：复用官方 `czdb-search-c` 的 v4 算法——文件头小块用 Windows `BCrypt` 做 AES-128-ECB 解密、索引/数据采用 XOR、归属记录用极简内置 msgpack 解析器；不引入 OpenSSL / msgpack-c，静态 MFC(`/MT`) 编译链保持干净。
-  - **加载路径**：优先读取 `WinMTR.exe` 同目录下的 `cz88_public_v4.czdb`，找不到则回退到桌面 `C:\Users\12788\Desktop\cz88_public_v4.czdb`；数据库以内存模式整体读入，仅做只读查询，**多线程安全**。
+  - **加载路径**：读取 `WinMTR.exe` 同目录下的 `cz88_public_v4.czdb`（不再有桌面回退）；数据库以内存模式整体读入，仅做只读查询，**多线程安全**。
+  - **密钥外置（不发布）**：CZDB 解密密钥从同目录 `czdb.key` 读取，该文件已加入 `.gitignore`，**不入库、不随 Release 发布**；缺 `czdb.key` 时跳过离线回退，仅走在线查询。
   - **仅作回退**：公网跳点仍优先走在线查询（更快、含运营商/IP类型）；仅在在线查询（含 5 次退避重试）彻底失败时才命中纯真库，输出格式与在线保持一致（「IP 归属地 运营商」）。
 - 版本号提升为 **v1.00**。
 
@@ -47,7 +48,7 @@
 
 1. 从 [Releases](https://github.com/ALi1216/WinMTR/releases) 下载 `WinMTR.exe`；
 2. 直接运行，输入目标域名/IP 开始测试；
-3. 归属识别优先走联网实时查询（运行时需可访问 `https://www.ipshudi.com/`）；在线查询失败时自动回退到本地纯真库 `cz88_public_v4.czdb`（放在 `WinMTR.exe` 同目录或桌面）补全归属，无需联网也能显示归属。
+3. 归属识别优先走联网实时查询（运行时需可访问 `https://www.ipshudi.com/`）；在线查询失败时自动回退到本地纯真库 `cz88_public_v4.czdb`（放在 `WinMTR.exe` 同目录）补全归属，无需联网也能显示归属。解密密钥来自同目录 `czdb.key`（不随仓库发布，需自行放置）。
 
 ## 编译
 
